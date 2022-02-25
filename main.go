@@ -1,9 +1,8 @@
 package main
 
-import (
-    "fmt"
-)
-
 func main() {
-    fmt.Println("Hello, lox")
+	chunk := NewChunk()
+	chunk.Write(OpReturn)
+	chunk.DisassembleChunk("chunk")
+	chunk.Free()
 }
