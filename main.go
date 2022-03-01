@@ -12,10 +12,26 @@ func main() {
 
 	vm := NewVM(*traceExecution)
 	chunk := NewChunk()
+
 	ci := chunk.AddConstant(1.2)
 	chunk.Write(OpConstant, 123)
 	chunk.Write(OpCode(ci), 123)
+
+	ci = chunk.AddConstant(3.4)
+	chunk.Write(OpConstant, 123)
+	chunk.Write(OpCode(ci), 123)
+
+	chunk.Write(OpAdd, 123)
+
+	ci = chunk.AddConstant(5.6)
+	chunk.Write(OpConstant, 123)
+	chunk.Write(OpCode(ci), 123)
+
+	chunk.Write(OpDivide, 123)
+
+	chunk.Write(OpNegate, 123)
 	chunk.Write(OpReturn, 123)
+
 	vm.Interpret(chunk)
 	vm.Free()
 

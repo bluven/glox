@@ -8,6 +8,11 @@ type Value float64
 const (
 	OpReturn OpCode = iota
 	OpConstant
+	OpNegate
+	OpAdd
+	OpSubtract
+	OpMultiply
+	OpDivide
 )
 
 type Chunk struct {
@@ -63,6 +68,16 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return c.simpleInstruction("OP_RETURN", offset)
 	case OpConstant:
 		return c.constantInstruction("OP_CONSTANT", offset)
+	case OpNegate:
+		return c.simpleInstruction("OP_NEGATE", offset)
+	case OpAdd:
+		return c.simpleInstruction("OP_ADD", offset)
+	case OpSubtract:
+		return c.simpleInstruction("OP_SUBTRACT", offset)
+	case OpMultiply:
+		return c.simpleInstruction("OP_MULTIPLY", offset)
+	case OpDivide:
+		return c.simpleInstruction("OP_DIVIDE", offset)
 	default:
 		fmt.Printf("Unknown opcode %d\n", op)
 		return offset + 1
