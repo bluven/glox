@@ -1,6 +1,12 @@
 package main
 
-import "flag"
+import (
+	"bufio"
+	"flag"
+	"fmt"
+	"io/ioutil"
+	"os"
+)
 
 var (
 	disassemble    = flag.Bool("disassemble", false, "")
@@ -10,34 +16,66 @@ var (
 func main() {
 	flag.Parse()
 
-	vm := NewVM(*traceExecution)
-	chunk := NewChunk()
-
-	ci := chunk.AddConstant(1.2)
-	chunk.Write(OpConstant, 123)
-	chunk.Write(OpCode(ci), 123)
-
-	ci = chunk.AddConstant(3.4)
-	chunk.Write(OpConstant, 123)
-	chunk.Write(OpCode(ci), 123)
-
-	chunk.Write(OpAdd, 123)
-
-	ci = chunk.AddConstant(5.6)
-	chunk.Write(OpConstant, 123)
-	chunk.Write(OpCode(ci), 123)
-
-	chunk.Write(OpDivide, 123)
-
-	chunk.Write(OpNegate, 123)
-	chunk.Write(OpReturn, 123)
-
-	vm.Interpret(chunk)
-	vm.Free()
-
-	if *disassemble {
-		chunk.DisassembleChunk("chunk")
+	argc := len(os.Args)
+	if argc == 1 {
+		repl()
+	} else if argc == 2 {
+		runFile(os.Args[1])
+	} else {
+		fmt.Fprintf(os.Stderr, "Usage: glox [path]\n")
+		os.Exit(64)
 	}
 
-	chunk.Free()
+	vm := NewVM(*traceExecution)
+	vm.Free()
+}
+
+func repl() {
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Printf("> ")
+		scanner.Scan()
+
+		interpret(scanner.Text())
+	}
+}
+
+func interpret(source string) InterpretResult {
+	compile(source)
+	return InterpretOK
+}
+
+func runFile(filename string) {
+	content, err := ioutil.ReadFile(filename)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to open file: %s.\n", err)
+		return
+	}
+
+	switch interpret(string(content)) {
+	case InterpretCompileError:
+		os.Exit(65)
+	case InterpretRuntimeError:
+		os.Exit(70)
+	}
+}
+
+func compile(source string) {
+	scanner := NewScanner(source)
+	line := -1
+
+	for {
+		token := scanner.Scan()
+		if token.Line != line {
+			fmt.Printf("%4d ", token.Line)
+			line = token.Line
+		} else {
+			fmt.Printf("   | ")
+		}
+		fmt.Printf("%2d '%s'\n", token.Type, token.Lexeme)
+
+		if token.Type == EOF {
+			break
+		}
+	}
 }
