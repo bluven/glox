@@ -36,13 +36,9 @@ func repl() {
 		fmt.Printf("> ")
 		scanner.Scan()
 
-		interpret(scanner.Text())
+		// 加换行符是因为解析数字时，peek会越界，正常的statement应该是";"结尾的
+		interpret(scanner.Text() + "\n")
 	}
-}
-
-func interpret(source string) InterpretResult {
-	compile(source)
-	return InterpretOK
 }
 
 func runFile(filename string) {
@@ -60,22 +56,17 @@ func runFile(filename string) {
 	}
 }
 
-func compile(source string) {
-	scanner := NewScanner(source)
-	line := -1
+func interpret(source string) InterpretResult {
+	chunk := NewChunk()
 
-	for {
-		token := scanner.Scan()
-		if token.Line != line {
-			fmt.Printf("%4d ", token.Line)
-			line = token.Line
-		} else {
-			fmt.Printf("   | ")
-		}
-		fmt.Printf("%2d '%s'\n", token.Type, token.Lexeme)
-
-		if token.Type == EOF {
-			break
-		}
+	if !compile(source, chunk) {
+		chunk.Free()
+		return InterpretCompileError
 	}
+
+	vm := NewVM(*traceExecution)
+	result := vm.Interpret(chunk)
+	chunk.Free()
+
+	return result
 }

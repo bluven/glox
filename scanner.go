@@ -59,6 +59,10 @@ type Token struct {
 	Line   int
 }
 
+func (t Token) String() string {
+	return t.Lexeme
+}
+
 type Scanner struct {
 	code                 string
 	start, current, line int

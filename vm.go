@@ -51,10 +51,10 @@ func (vm *VM) Free() {
 
 }
 
-func (vm *VM) Interpret(chunk *Chunk) {
+func (vm *VM) Interpret(chunk *Chunk) InterpretResult {
 	vm.chunk = chunk
 	vm.ip = 0
-	vm.run()
+	return vm.run()
 }
 
 func (vm *VM) run() InterpretResult {
