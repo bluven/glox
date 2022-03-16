@@ -31,6 +31,7 @@ const (
 )
 
 type Parser struct {
+	disassemble       bool
 	scanner           *Scanner
 	current, previous Token
 	hadError          bool
@@ -39,8 +40,8 @@ type Parser struct {
 	rules             map[TokenType]ParseRule
 }
 
-func compile(source string, chunk *Chunk) bool {
-	parser := NewParser(source, chunk)
+func compile(source string, chunk *Chunk, disassemble bool) bool {
+	parser := NewParser(source, chunk, disassemble)
 	parser.advance()
 	parser.expression()
 	parser.consume(EOF, "Expect end of expression.")
@@ -48,10 +49,11 @@ func compile(source string, chunk *Chunk) bool {
 	return !parser.hadError
 }
 
-func NewParser(source string, chunk *Chunk) *Parser {
+func NewParser(source string, chunk *Chunk, disassemble bool) *Parser {
 	parser := &Parser{
-		scanner: NewScanner(source),
-		chunk:   chunk,
+		scanner:     NewScanner(source),
+		chunk:       chunk,
+		disassemble: disassemble,
 	}
 	parser.buildParseRuleTable()
 
@@ -172,6 +174,9 @@ func (parser *Parser) literal() {
 
 func (parser *Parser) EndCompiler() {
 	parser.emitReturn()
+	if parser.disassemble {
+		parser.currentChunk().DisassembleChunk("code")
+	}
 }
 
 func (parser *Parser) errorAtCurrent(msg string) {

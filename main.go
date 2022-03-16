@@ -59,7 +59,7 @@ func runFile(filename string) {
 func interpret(source string) InterpretResult {
 	chunk := NewChunk()
 
-	if !compile(source, chunk) {
+	if !compile(source, chunk, *disassemble) {
 		chunk.Free()
 		return InterpretCompileError
 	}
