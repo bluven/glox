@@ -104,7 +104,7 @@ func (parser *Parser) parsePrecedence(precedence Precedence) {
 
 func (parser *Parser) number() {
 	value, _ := strconv.ParseFloat(parser.previous.Lexeme, 64)
-	parser.emitConstant(Value(value))
+	parser.emitConstant(numberValue(value))
 }
 
 func (parser *Parser) group() {
@@ -120,7 +120,7 @@ func (parser *Parser) unary() {
 	// Emit the operator instruction.
 	switch operatorType {
 	case Bang:
-		//parser.emitOp(Op)
+		parser.emitOp(OpNot)
 	case Minus:
 		parser.emitOp(OpNegate)
 	default:
@@ -134,6 +134,18 @@ func (parser *Parser) binary() {
 	parser.parsePrecedence(rule.Precedence + 1)
 
 	switch operatorType {
+	case BangEqual:
+		parser.emitOps(OpEqual, OpNot)
+	case EqualEqual:
+		parser.emitOp(OpEqual)
+	case Greater:
+		parser.emitOp(OpGreater)
+	case GreaterEqual:
+		parser.emitOps(OpLess, OpNot)
+	case Less:
+		parser.emitOp(OpLess)
+	case LessEqual:
+		parser.emitOps(OpGreater, OpNot)
 	case Plus:
 		parser.emitOp(OpAdd)
 	case Minus:
@@ -142,6 +154,18 @@ func (parser *Parser) binary() {
 		parser.emitOp(OpMultiply)
 	case Slash:
 		parser.emitOp(OpDivide)
+	default:
+	}
+}
+
+func (parser *Parser) literal() {
+	switch parser.previous.Type {
+	case False:
+		parser.emitOp(OpFalse)
+	case Nil:
+		parser.emitOp(OpNil)
+	case True:
+		parser.emitOp(OpTrue)
 	default:
 	}
 }
@@ -225,31 +249,31 @@ func (parser *Parser) buildParseRuleTable() {
 		Semicolon:    {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Slash:        {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceFactor},
 		Star:         {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceFactor},
-		Bang:         {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
-		BangEqual:    {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
+		Bang:         {Prefix: parser.unary, Infix: nil, Precedence: PrecedenceNone},
+		BangEqual:    {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceNone},
 		Equal:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
-		EqualEqual:   {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
-		Greater:      {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
-		GreaterEqual: {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
-		Less:         {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
-		LessEqual:    {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
+		EqualEqual:   {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceEquality},
+		Greater:      {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceComparison},
+		GreaterEqual: {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceComparison},
+		Less:         {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceComparison},
+		LessEqual:    {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceComparison},
 		Identifier:   {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		String:       {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Number:       {Prefix: parser.number, Infix: nil, Precedence: PrecedenceNone},
 		And:          {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Class:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Else:         {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
-		False:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
+		False:        {Prefix: parser.literal, Infix: nil, Precedence: PrecedenceNone},
 		For:          {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Fun:          {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		If:           {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
-		Nil:          {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
+		Nil:          {Prefix: parser.literal, Infix: nil, Precedence: PrecedenceNone},
 		Or:           {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Print:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Return:       {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Super:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		This:         {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
-		True:         {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
+		True:         {Prefix: parser.literal, Infix: nil, Precedence: PrecedenceNone},
 		Var:          {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		While:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Error:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},

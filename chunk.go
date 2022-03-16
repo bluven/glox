@@ -3,16 +3,22 @@ package main
 import "fmt"
 
 type OpCode uint
-type Value float64
 
 const (
 	OpReturn OpCode = iota
 	OpConstant
 	OpNegate
+	OpNil
+	OpTrue
+	OpFalse
+	OpEqual
+	OpGreater
+	OpLess
 	OpAdd
 	OpSubtract
 	OpMultiply
 	OpDivide
+	OpNot
 )
 
 type Chunk struct {
@@ -70,6 +76,12 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return c.constantInstruction("OP_CONSTANT", offset)
 	case OpNegate:
 		return c.simpleInstruction("OP_NEGATE", offset)
+	case OpEqual:
+		return c.simpleInstruction("OP_EQUAL", offset)
+	case OpGreater:
+		return c.simpleInstruction("OP_GREATER", offset)
+	case OpLess:
+		return c.simpleInstruction("OP_LESS", offset)
 	case OpAdd:
 		return c.simpleInstruction("OP_ADD", offset)
 	case OpSubtract:
@@ -78,6 +90,14 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return c.simpleInstruction("OP_MULTIPLY", offset)
 	case OpDivide:
 		return c.simpleInstruction("OP_DIVIDE", offset)
+	case OpNil:
+		return c.simpleInstruction("OP_NIL", offset)
+	case OpTrue:
+		return c.simpleInstruction("OP_TRUE", offset)
+	case OpFalse:
+		return c.simpleInstruction("OP_FALSE", offset)
+	case OpNot:
+		return c.simpleInstruction("OP_NOT", offset)
 	default:
 		fmt.Printf("Unknown opcode %d\n", op)
 		return offset + 1
@@ -92,12 +112,8 @@ func (c *Chunk) simpleInstruction(name string, offset int) int {
 func (c *Chunk) constantInstruction(name string, offset int) int {
 	ci := c.codes[offset+1]
 	fmt.Printf("%-16s %4d '", name, ci)
-	printValue(c.constants[ci])
+	c.constants[ci].Print()
 	fmt.Printf("'\n")
 
 	return offset + 2
-}
-
-func printValue(value Value) {
-	fmt.Printf("%g", value)
 }

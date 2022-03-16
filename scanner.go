@@ -141,9 +141,9 @@ func (scanner *Scanner) makeToken(tt TokenType) Token {
 }
 
 func (scanner *Scanner) matchAndMakeToken(expected byte, t1, t2 TokenType) Token {
-	tt := t1
+	tt := t2
 	if scanner.match(expected) {
-		tt = t2
+		tt = t1
 	}
 
 	return Token{
@@ -192,6 +192,8 @@ func (scanner *Scanner) skipWhitespace() {
 				for !scanner.isAtEnd() && scanner.peek() != '\n' {
 					scanner.advance()
 				}
+			} else {
+				return
 			}
 		default:
 			return

@@ -16,11 +16,11 @@ var (
 func main() {
 	flag.Parse()
 
-	argc := len(os.Args)
-	if argc == 1 {
+	argc := len(flag.Args())
+	if argc == 0 {
 		repl()
-	} else if argc == 2 {
-		runFile(os.Args[1])
+	} else if argc == 1 {
+		runFile(flag.Arg(0))
 	} else {
 		fmt.Fprintf(os.Stderr, "Usage: glox [path]\n")
 		os.Exit(64)
