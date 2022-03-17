@@ -30,6 +30,7 @@ type VM struct {
 	chunk          *Chunk
 	ip             uint
 	traceExecution bool
+	objects        *Object
 
 	stack    [StackMax]Value
 	stackTop int
@@ -66,7 +67,7 @@ func (vm *VM) peek(distance int) Value {
 }
 
 func (vm *VM) Free() {
-
+	vm.freeObjects()
 }
 
 func (vm *VM) Interpret(chunk *Chunk) InterpretResult {
@@ -101,7 +102,10 @@ func (vm *VM) run() InterpretResult {
 				return InterpretRuntimeError
 			}
 		case OpAdd:
-			if result := vm.binaryOp(opAdd, numberValue); result != InterpretOK {
+			if vm.peek(0).IsString() && vm.peek(1).IsString() {
+				v2, v1 := vm.pop(), vm.pop()
+				vm.push(stringValue(v1.String() + v2.String()))
+			} else if result := vm.binaryOp(opAdd, numberValue); result != InterpretOK {
 				return result
 			}
 		case OpSubtract:
@@ -140,6 +144,25 @@ func (vm *VM) run() InterpretResult {
 			fmt.Printf("\n")
 			return InterpretOK
 		}
+	}
+}
+
+func (vm *VM) allocateObject(v interface{}) *Object {
+	switch v.(type) {
+	case string:
+		obj := &Object{Type: ObjectString, Data: v, Next: vm.objects}
+		vm.objects = obj
+		return obj
+	default:
+		return nil
+	}
+}
+
+func (vm *VM) freeObjects() {
+	for vm.objects != nil {
+		_ = vm.objects
+		// todo: freeObject
+		vm.objects = vm.objects.Next
 	}
 }
 

@@ -109,6 +109,11 @@ func (parser *Parser) number() {
 	parser.emitConstant(numberValue(value))
 }
 
+func (parser *Parser) string() {
+	length := len(parser.previous.Lexeme)
+	parser.emitConstant(stringValue(parser.previous.Lexeme[1 : length-1]))
+}
+
 func (parser *Parser) group() {
 	parser.expression()
 	parser.consume(RightParen, "Expect ')' after expression.")
@@ -263,7 +268,7 @@ func (parser *Parser) buildParseRuleTable() {
 		Less:         {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceComparison},
 		LessEqual:    {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceComparison},
 		Identifier:   {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
-		String:       {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
+		String:       {Prefix: parser.string, Infix: nil, Precedence: PrecedenceNone},
 		Number:       {Prefix: parser.number, Infix: nil, Precedence: PrecedenceNone},
 		And:          {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Class:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},

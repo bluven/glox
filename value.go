@@ -9,6 +9,8 @@ const (
 	ValueNil ValueType = iota
 	ValueBool
 	ValueNumber
+	ValueObject
+	ValueString
 )
 
 type Value struct {
@@ -37,6 +39,14 @@ func numberValue(v interface{}) Value {
 	}
 }
 
+func objectValue(v interface{}) Value {
+	return Value{Type: ValueObject, Raw: v}
+}
+
+func stringValue(v interface{}) Value {
+	return Value{Type: ValueString, Raw: v}
+}
+
 func (v Value) IsFalsey() bool {
 	return v.IsNil() || (v.IsBool() && !v.Bool())
 }
@@ -53,12 +63,32 @@ func (v Value) IsNumber() bool {
 	return v.Type == ValueNumber
 }
 
+func (v Value) IsObject() bool {
+	return v.Type == ValueObject
+}
+
+func (v Value) IsString() bool {
+	return v.Type == ValueString
+}
+
+func (v Value) IsObjectType(t ObjectType) bool {
+	return v.IsObject() && v.Raw.(*Object).Type == t
+}
+
 func (v Value) Number() float64 {
 	return v.Raw.(float64)
 }
 
 func (v Value) Bool() bool {
 	return v.Raw.(bool)
+}
+
+func (v Value) Object() *Object {
+	return v.Raw.(*Object)
+}
+
+func (v Value) String() string {
+	return v.Raw.(string)
 }
 
 func (v Value) Print() {
@@ -69,6 +99,10 @@ func (v Value) Print() {
 		fmt.Print("nil")
 	case ValueNumber:
 		fmt.Printf("%g", v.Number())
+	case ValueString:
+		fmt.Printf("%s", v.Raw)
+	case ValueObject:
+		panic("not implemented")
 	}
 }
 
@@ -84,6 +118,8 @@ func (v Value) Equal(o Value) bool {
 		return v.Bool() == o.Bool()
 	case ValueNumber:
 		return v.Number() == o.Number()
+	case ValueString:
+		return v.Raw == o.Raw
 	default:
 		return false
 	}
