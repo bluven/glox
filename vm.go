@@ -27,18 +27,22 @@ var (
 )
 
 type VM struct {
-	chunk          *Chunk
-	ip             uint
 	traceExecution bool
-	objects        *Object
+	disassemble    bool
+
+	chunk   *Chunk
+	ip      uint
+	objects *Object
+	globals map[string]Value
 
 	stack    [StackMax]Value
 	stackTop int
 }
 
-func NewVM(traceExecution bool) *VM {
+func NewVM(disassemble, traceExecution bool) *VM {
 	vm := &VM{
 		traceExecution: traceExecution,
+		disassemble:    disassemble,
 	}
 	vm.init()
 	return vm
@@ -50,6 +54,7 @@ func (vm *VM) init() {
 
 func (vm *VM) resetStack() {
 	vm.stackTop = 0
+	vm.globals = make(map[string]Value)
 }
 
 func (vm *VM) push(value Value) {
@@ -67,10 +72,16 @@ func (vm *VM) peek(distance int) Value {
 }
 
 func (vm *VM) Free() {
+	vm.globals = nil
 	vm.freeObjects()
 }
 
-func (vm *VM) Interpret(chunk *Chunk) InterpretResult {
+func (vm *VM) Interpret(source string) InterpretResult {
+	chunk, ok := NewParser(source, vm.disassemble).compile()
+	if !ok {
+		return InterpretCompileError
+	}
+
 	vm.chunk = chunk
 	vm.ip = 0
 	return vm.run()
@@ -139,9 +150,35 @@ func (vm *VM) run() InterpretResult {
 			if result := vm.binaryOp(opLess, boolValue); result != InterpretOK {
 				return result
 			}
-		case OpReturn:
+		case OpPrint:
 			vm.pop().Print()
-			fmt.Printf("\n")
+			fmt.Println()
+		case OpPop:
+			vm.pop()
+		case OpGetGlobal:
+			name := vm.readString()
+			if value, ok := vm.globals[name]; ok {
+				vm.push(value)
+			} else {
+				vm.runtimeError("Undefined variable '%s'.", name)
+				return InterpretRuntimeError
+			}
+		case OpSetGlobal:
+			name := vm.readString()
+			value := vm.peek(0)
+
+			if _, ok := vm.globals[name]; ok {
+				vm.globals[name] = value
+			} else {
+				vm.runtimeError("Undefined variable '%s'.", name)
+				return InterpretRuntimeError
+			}
+		case OpDefineGlobal:
+			name := vm.readString()
+			vm.globals[name] = vm.peek(0)
+			vm.pop()
+			break
+		case OpReturn:
 			return InterpretOK
 		}
 	}
@@ -175,6 +212,10 @@ func (vm *VM) readByte() OpCode {
 func (vm *VM) readConstant() Value {
 	ci := vm.readByte()
 	return vm.chunk.constants[ci]
+}
+
+func (vm *VM) readString() string {
+	return vm.readConstant().String()
 }
 
 func (vm *VM) binaryOp(op BinaryOp, valueFn ValueFn) InterpretResult {

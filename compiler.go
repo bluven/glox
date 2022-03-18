@@ -7,7 +7,7 @@ import (
 )
 
 type Precedence int
-type ParseFn func()
+type ParseFn func(canAssign bool)
 type ParseRule struct {
 	Prefix     ParseFn
 	Infix      ParseFn
@@ -40,24 +40,25 @@ type Parser struct {
 	rules             map[TokenType]ParseRule
 }
 
-func compile(source string, chunk *Chunk, disassemble bool) bool {
-	parser := NewParser(source, chunk, disassemble)
-	parser.advance()
-	parser.expression()
-	parser.consume(EOF, "Expect end of expression.")
-	parser.EndCompiler()
-	return !parser.hadError
-}
-
-func NewParser(source string, chunk *Chunk, disassemble bool) *Parser {
+func NewParser(source string, disassemble bool) *Parser {
 	parser := &Parser{
 		scanner:     NewScanner(source),
-		chunk:       chunk,
+		chunk:       NewChunk(),
 		disassemble: disassemble,
 	}
 	parser.buildParseRuleTable()
 
 	return parser
+}
+
+func (parser *Parser) compile() (*Chunk, bool) {
+	parser.advance()
+	for !parser.match(EOF) {
+		parser.declaration()
+	}
+	parser.consume(EOF, "Expect end of expression.")
+	parser.endCompiler()
+	return parser.chunk, !parser.hadError
 }
 
 func (parser *Parser) advance() {
@@ -82,6 +83,72 @@ func (parser *Parser) consume(expected TokenType, msg string) {
 	parser.errorAtCurrent(msg)
 }
 
+func (parser *Parser) match(tt TokenType) bool {
+	if !parser.check(tt) {
+		return false
+	}
+	parser.advance()
+	return true
+}
+
+func (parser *Parser) check(tt TokenType) bool {
+	return parser.current.Type == tt
+}
+
+func (parser *Parser) declaration() {
+	if parser.match(Var) {
+		parser.varDeclaration()
+	} else {
+		parser.statement()
+	}
+
+	if parser.panicMode {
+		parser.synchronize()
+	}
+}
+
+func (parser *Parser) varDeclaration() {
+	global := parser.parseVariable("Expect variable name.")
+
+	if parser.match(Equal) {
+		parser.expression()
+	} else {
+		parser.emitOp(OpNil)
+	}
+	parser.consume(Semicolon, "Expect ';' after variable declaration.")
+
+	parser.defineVariable(global)
+}
+
+func (parser *Parser) parseVariable(errMsg string) OpCode {
+	parser.consume(Identifier, errMsg)
+	return parser.identifierConstant(parser.previous)
+}
+
+func (parser *Parser) identifierConstant(name Token) OpCode {
+	return parser.makeConstant(stringValue(name.Lexeme))
+}
+
+func (parser *Parser) statement() {
+	if parser.match(Print) {
+		parser.printStatement()
+	} else {
+		parser.expressionStatement()
+	}
+}
+
+func (parser *Parser) printStatement() {
+	parser.expression()
+	parser.consume(Semicolon, "Expect ';' after value.")
+	parser.emitOp(OpPrint)
+}
+
+func (parser *Parser) expressionStatement() {
+	parser.expression()
+	parser.consume(Semicolon, "Expect ';' after expression.")
+	parser.emitOp(OpPop)
+}
+
 func (parser *Parser) expression() {
 	parser.parsePrecedence(PrecedenceAssigment)
 }
@@ -95,31 +162,40 @@ func (parser *Parser) parsePrecedence(precedence Precedence) {
 		parser.error("Expect expression.")
 		return
 	}
-	parsePrefix()
+	canAssign := precedence <= PrecedenceAssigment
+	parsePrefix(canAssign)
 
 	for precedence <= parser.getRule(parser.current.Type).Precedence {
 		parser.advance()
 		parseInfix := parser.getRule(parser.previous.Type).Infix
-		parseInfix()
+		parseInfix(canAssign)
+	}
+
+	if canAssign && parser.match(Equal) {
+		parser.error("Invalid assignment target.")
 	}
 }
 
-func (parser *Parser) number() {
-	value, _ := strconv.ParseFloat(parser.previous.Lexeme, 64)
-	parser.emitConstant(numberValue(value))
-}
-
-func (parser *Parser) string() {
+func (parser *Parser) string(canAssign bool) {
 	length := len(parser.previous.Lexeme)
 	parser.emitConstant(stringValue(parser.previous.Lexeme[1 : length-1]))
 }
 
-func (parser *Parser) group() {
+func (parser *Parser) number(canAssign bool) {
+	value, _ := strconv.ParseFloat(parser.previous.Lexeme, 64)
+	parser.emitConstant(numberValue(value))
+}
+
+func (parser *Parser) defineVariable(global OpCode) {
+	parser.emitOps(OpDefineGlobal, global)
+}
+
+func (parser *Parser) group(canAssign bool) {
 	parser.expression()
 	parser.consume(RightParen, "Expect ')' after expression.")
 }
 
-func (parser *Parser) unary() {
+func (parser *Parser) unary(canAssign bool) {
 	operatorType := parser.previous.Type
 
 	parser.parsePrecedence(PrecedenceUnary)
@@ -135,7 +211,7 @@ func (parser *Parser) unary() {
 	}
 }
 
-func (parser *Parser) binary() {
+func (parser *Parser) binary(canAssign bool) {
 	operatorType := parser.previous.Type
 	rule := parser.getRule(operatorType)
 	parser.parsePrecedence(rule.Precedence + 1)
@@ -165,7 +241,7 @@ func (parser *Parser) binary() {
 	}
 }
 
-func (parser *Parser) literal() {
+func (parser *Parser) literal(canAssign bool) {
 	switch parser.previous.Type {
 	case False:
 		parser.emitOp(OpFalse)
@@ -177,7 +253,38 @@ func (parser *Parser) literal() {
 	}
 }
 
-func (parser *Parser) EndCompiler() {
+func (parser *Parser) variable(canAssign bool) {
+	parser.namedVariable(parser.previous, canAssign)
+}
+
+func (parser *Parser) namedVariable(name Token, canAssign bool) {
+	if canAssign && parser.match(Equal) {
+		parser.expression()
+		parser.emitOps(OpSetGlobal, parser.identifierConstant(name))
+	} else {
+		parser.emitOps(OpGetGlobal, parser.identifierConstant(name))
+	}
+}
+
+func (parser *Parser) synchronize() {
+	parser.panicMode = false
+
+	for parser.current.Type != EOF {
+		if parser.previous.Type == Semicolon {
+			return
+		}
+
+		switch parser.current.Type {
+		case Class, Fun, Var, For, If, While, Print, Return:
+			return
+		default:
+		}
+
+		parser.advance()
+	}
+}
+
+func (parser *Parser) endCompiler() {
 	parser.emitReturn()
 	if parser.disassemble {
 		parser.currentChunk().DisassembleChunk("code")
@@ -267,7 +374,7 @@ func (parser *Parser) buildParseRuleTable() {
 		GreaterEqual: {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceComparison},
 		Less:         {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceComparison},
 		LessEqual:    {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceComparison},
-		Identifier:   {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
+		Identifier:   {Prefix: parser.variable, Infix: nil, Precedence: PrecedenceNone},
 		String:       {Prefix: parser.string, Infix: nil, Precedence: PrecedenceNone},
 		Number:       {Prefix: parser.number, Infix: nil, Precedence: PrecedenceNone},
 		And:          {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},

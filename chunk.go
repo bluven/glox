@@ -8,9 +8,11 @@ const (
 	OpReturn OpCode = iota
 	OpConstant
 	OpNegate
+	OpPrint
 	OpNil
 	OpTrue
 	OpFalse
+	OpPop
 	OpEqual
 	OpGreater
 	OpLess
@@ -19,6 +21,9 @@ const (
 	OpMultiply
 	OpDivide
 	OpNot
+	OpDefineGlobal
+	OpGetGlobal
+	OpSetGlobal
 )
 
 type Chunk struct {
@@ -98,6 +103,16 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return c.simpleInstruction("OP_FALSE", offset)
 	case OpNot:
 		return c.simpleInstruction("OP_NOT", offset)
+	case OpPrint:
+		return c.simpleInstruction("OP_PRINT", offset)
+	case OpPop:
+		return c.simpleInstruction("OP_POP", offset)
+	case OpDefineGlobal:
+		return c.constantInstruction("OP_DEFINE_GLOBAL", offset)
+	case OpGetGlobal:
+		return c.constantInstruction("OP_GET_GLOBAL", offset)
+	case OpSetGlobal:
+		return c.constantInstruction("OP_SET_GLOBAL", offset)
 	default:
 		fmt.Printf("Unknown opcode %d\n", op)
 		return offset + 1
