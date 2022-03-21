@@ -178,6 +178,12 @@ func (vm *VM) run() InterpretResult {
 			vm.globals[name] = vm.peek(0)
 			vm.pop()
 			break
+		case OpGetLocal:
+			index := vm.readByte()
+			vm.push(vm.stack[index])
+		case OpSetLocal:
+			index := vm.readByte()
+			vm.stack[index] = vm.peek(0)
 		case OpReturn:
 			return InterpretOK
 		}

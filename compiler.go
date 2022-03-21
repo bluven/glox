@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -31,19 +32,23 @@ const (
 )
 
 type Parser struct {
-	disassemble       bool
+	hadError    bool
+	panicMode   bool
+	disassemble bool
+
 	scanner           *Scanner
 	current, previous Token
-	hadError          bool
-	panicMode         bool
-	chunk             *Chunk
 	rules             map[TokenType]ParseRule
+
+	chunk    *Chunk
+	compiler *Compiler
 }
 
 func NewParser(source string, disassemble bool) *Parser {
 	parser := &Parser{
 		scanner:     NewScanner(source),
 		chunk:       NewChunk(),
+		compiler:    newCompiler(),
 		disassemble: disassemble,
 	}
 	parser.buildParseRuleTable()
@@ -120,8 +125,24 @@ func (parser *Parser) varDeclaration() {
 	parser.defineVariable(global)
 }
 
+func (parser *Parser) defineVariable(global OpCode) {
+	if parser.compiler.ScopeDepth > 0 {
+		parser.compiler.markInitialized()
+		return
+	}
+
+	parser.emitOps(OpDefineGlobal, global)
+}
+
 func (parser *Parser) parseVariable(errMsg string) OpCode {
 	parser.consume(Identifier, errMsg)
+
+	parser.declareVariable()
+
+	if parser.compiler.ScopeDepth > 0 {
+		return 0
+	}
+
 	return parser.identifierConstant(parser.previous)
 }
 
@@ -129,12 +150,49 @@ func (parser *Parser) identifierConstant(name Token) OpCode {
 	return parser.makeConstant(stringValue(name.Lexeme))
 }
 
+func (parser *Parser) declareVariable() {
+	if parser.compiler.ScopeDepth == 0 {
+		return
+	}
+
+	name := parser.previous
+	if parser.compiler.isLocalDeclared(name) {
+		parser.error("Already a variable with this name in this scope.")
+	}
+
+	err := parser.compiler.addLocal(name)
+	if err != nil {
+		parser.error("Too many local variables in function.")
+	}
+}
+
 func (parser *Parser) statement() {
 	if parser.match(Print) {
 		parser.printStatement()
+	} else if parser.match(LeftBrace) {
+		parser.beginScope()
+		parser.block()
+		parser.endScope()
 	} else {
 		parser.expressionStatement()
 	}
+}
+
+func (parser *Parser) beginScope() {
+	parser.compiler.ScopeDepth += 1
+}
+
+func (parser *Parser) endScope() {
+	parser.compiler.ScopeDepth -= 1
+
+	locals := parser.compiler.Locals
+	localCount := len(locals)
+
+	for localCount > 0 && locals[localCount-1].Depth > parser.compiler.ScopeDepth {
+		parser.emitOp(OpPop)
+		localCount -= 1
+	}
+	parser.compiler.Locals = locals[:localCount]
 }
 
 func (parser *Parser) printStatement() {
@@ -176,6 +234,14 @@ func (parser *Parser) parsePrecedence(precedence Precedence) {
 	}
 }
 
+func (parser *Parser) block() {
+	for !parser.check(RightBrace) && !parser.check(EOF) {
+		parser.declaration()
+	}
+
+	parser.consume(RightBrace, "Expect '}' after block.")
+}
+
 func (parser *Parser) string(canAssign bool) {
 	length := len(parser.previous.Lexeme)
 	parser.emitConstant(stringValue(parser.previous.Lexeme[1 : length-1]))
@@ -184,10 +250,6 @@ func (parser *Parser) string(canAssign bool) {
 func (parser *Parser) number(canAssign bool) {
 	value, _ := strconv.ParseFloat(parser.previous.Lexeme, 64)
 	parser.emitConstant(numberValue(value))
-}
-
-func (parser *Parser) defineVariable(global OpCode) {
-	parser.emitOps(OpDefineGlobal, global)
 }
 
 func (parser *Parser) group(canAssign bool) {
@@ -258,11 +320,28 @@ func (parser *Parser) variable(canAssign bool) {
 }
 
 func (parser *Parser) namedVariable(name Token, canAssign bool) {
+	var getOp, setOp OpCode
+
+	arg, found, err := parser.compiler.resolveLocal(name)
+	if err != nil {
+		parser.error(err.Error())
+		return
+	}
+
+	if found {
+		getOp = OpGetLocal
+		setOp = OpSetGlobal
+	} else {
+		arg = parser.identifierConstant(name)
+		getOp = OpGetGlobal
+		setOp = OpSetGlobal
+	}
+
 	if canAssign && parser.match(Equal) {
 		parser.expression()
-		parser.emitOps(OpSetGlobal, parser.identifierConstant(name))
+		parser.emitOps(setOp, arg)
 	} else {
-		parser.emitOps(OpGetGlobal, parser.identifierConstant(name))
+		parser.emitOps(getOp, arg)
 	}
 }
 
@@ -396,4 +475,67 @@ func (parser *Parser) buildParseRuleTable() {
 		Error:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		EOF:          {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 	}
+}
+
+type Local struct {
+	Name  Token
+	Depth int
+}
+
+type Compiler struct {
+	Locals     []Local
+	ScopeDepth int
+}
+
+func newCompiler() *Compiler {
+	return &Compiler{
+		Locals:     make([]Local, 0, MaxUint8),
+		ScopeDepth: 0,
+	}
+}
+
+func (compiler *Compiler) resolveLocal(name Token) (OpCode, bool, error) {
+	for i := len(compiler.Locals) - 1; i >= 0; i-- {
+		local := compiler.Locals[i]
+		if name.Lexeme == local.Name.Lexeme {
+			if local.Depth == -1 {
+				return 0, false, errors.New("can't read local variable in its own initializer")
+			}
+			return OpCode(i), true, nil
+		}
+	}
+
+	return 0, false, nil
+}
+
+func (compiler *Compiler) markInitialized() {
+	compiler.Locals[len(compiler.Locals)-1].Depth = compiler.ScopeDepth
+}
+
+func (compiler *Compiler) isLocalDeclared(name Token) bool {
+	for i := len(compiler.Locals) - 1; i >= 0; i-- {
+		local := compiler.Locals[i]
+		if local.Depth != -1 && local.Depth < compiler.ScopeDepth {
+			break
+		}
+
+		if name.Lexeme == local.Name.Lexeme {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (compiler *Compiler) addLocal(name Token) error {
+	if len(compiler.Locals) > MaxUint8 {
+		return errors.New("Too many local variables in function.")
+	}
+
+	compiler.Locals = append(compiler.Locals, Local{
+		Name:  name,
+		Depth: -1,
+	})
+
+	return nil
 }
