@@ -191,6 +191,8 @@ func (vm *VM) run() InterpretResult {
 			}
 		case OpJump:
 			vm.ip += uint(vm.readShort())
+		case OpLoop:
+			vm.ip -= uint(vm.readShort())
 		case OpReturn:
 			return InterpretOK
 		}

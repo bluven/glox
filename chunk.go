@@ -28,6 +28,7 @@ const (
 	OpSetLocal
 	OpJump
 	OpJumpIfFalse
+	OpLoop
 )
 
 type Chunk struct {
@@ -60,6 +61,10 @@ func (c *Chunk) AddConstant(value Value) int {
 
 func (c *Chunk) Free() {
 	c.init()
+}
+
+func (c *Chunk) count() int {
+	return len(c.codes)
 }
 
 func (c *Chunk) DisassembleChunk(name string) {
@@ -125,6 +130,8 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return c.jumpInstruction("OP_JUMP", 1, offset)
 	case OpJumpIfFalse:
 		return c.jumpInstruction("OP_JUMP_IF_FALSE", 1, offset)
+	case OpLoop:
+		return c.jumpInstruction("OP_LOOP", -1, offset)
 	default:
 		fmt.Printf("Unknown opcode %d\n", op)
 		return offset + 1

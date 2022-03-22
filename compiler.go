@@ -122,7 +122,7 @@ func (parser *Parser) varDeclaration() {
 	if parser.match(Equal) {
 		parser.expression()
 	} else {
-		parser.emitOp(OpNil)
+		parser.emitByte(OpNil)
 	}
 	parser.consume(Semicolon, "Expect ';' after variable declaration.")
 
@@ -135,7 +135,7 @@ func (parser *Parser) defineVariable(global OpCode) {
 		return
 	}
 
-	parser.emitOps(OpDefineGlobal, global)
+	parser.emitBytes(OpDefineGlobal, global)
 }
 
 func (parser *Parser) parseVariable(errMsg string) OpCode {
@@ -171,15 +171,20 @@ func (parser *Parser) declareVariable() {
 }
 
 func (parser *Parser) statement() {
-	if parser.match(Print) {
+	switch {
+	case parser.match(Print):
 		parser.printStatement()
-	} else if parser.match(If) {
+	case parser.match(If):
 		parser.ifStatement()
-	} else if parser.match(LeftBrace) {
+	case parser.match(LeftBrace):
 		parser.beginScope()
 		parser.block()
 		parser.endScope()
-	} else {
+	case parser.match(While):
+		parser.whileStatement()
+	case parser.match(For):
+		parser.forStatement()
+	default:
 		parser.expressionStatement()
 	}
 }
@@ -195,7 +200,7 @@ func (parser *Parser) endScope() {
 	localCount := len(locals)
 
 	for localCount > 0 && locals[localCount-1].Depth > parser.compiler.ScopeDepth {
-		parser.emitOp(OpPop)
+		parser.emitByte(OpPop)
 		localCount -= 1
 	}
 	parser.compiler.Locals = locals[:localCount]
@@ -207,13 +212,13 @@ func (parser *Parser) ifStatement() {
 	parser.consume(RightParen, "Expect ')' after condition.")
 
 	thenJump := parser.emitJump(OpJumpIfFalse)
-	parser.emitOp(OpPop)
+	parser.emitByte(OpPop)
 	parser.statement()
 
 	elseJump := parser.emitJump(OpJump)
 	parser.patchJump(thenJump)
 
-	parser.emitOp(OpPop)
+	parser.emitByte(OpPop)
 	if parser.match(Else) {
 		parser.statement()
 	}
@@ -221,9 +226,9 @@ func (parser *Parser) ifStatement() {
 }
 
 func (parser *Parser) emitJump(op OpCode) int {
-	parser.emitOp(op)
-	parser.emitOp(0xff)
-	parser.emitOp(0xff)
+	parser.emitByte(op)
+	parser.emitByte(0xff)
+	parser.emitByte(0xff)
 	return len(parser.currentChunk().codes) - 2
 }
 
@@ -240,16 +245,92 @@ func (parser *Parser) patchJump(offset int) {
 	chunk.codes[offset+1] = OpCode(jump & 0xff)
 }
 
+func (parser *Parser) whileStatement() {
+	loopStart := len(parser.currentChunk().codes)
+
+	parser.consume(LeftParen, "Expect '(' after 'while'.")
+	parser.expression()
+	parser.consume(RightParen, "Expect ')' after condition.")
+
+	exitJump := parser.emitJump(OpJumpIfFalse)
+	parser.emitByte(OpPop)
+	parser.statement()
+
+	parser.emitLoop(loopStart)
+
+	parser.patchJump(exitJump)
+	parser.emitByte(OpPop)
+}
+
+func (parser *Parser) forStatement() {
+	parser.beginScope()
+	parser.consume(LeftParen, "Expect '(' after 'for'.")
+
+	switch {
+	case parser.match(Semicolon):
+	case parser.match(Var):
+		parser.varDeclaration()
+	default:
+		parser.expressionStatement()
+	}
+
+	loopStart := parser.currentChunk().count()
+	exitJump := -1
+
+	if !parser.match(Semicolon) {
+		parser.expression()
+		parser.consume(Semicolon, "Expect ';' after loop condition.")
+
+		// Jump out of the loop if the condition is false.
+		exitJump = parser.emitJump(OpJumpIfFalse)
+		parser.emitByte(OpPop) // Condition.
+	}
+
+	if !parser.match(RightParen) {
+		bodyJump := parser.emitJump(OpJump)
+		incrementStart := parser.currentChunk().count()
+		parser.expression()
+		parser.emitByte(OpPop)
+		parser.consume(RightParen, "Expect ')' after for clauses.")
+
+		parser.emitLoop(loopStart)
+		loopStart = incrementStart
+		parser.patchJump(bodyJump)
+	}
+
+	parser.statement()
+	parser.emitLoop(loopStart)
+
+	if exitJump != -1 {
+		parser.patchJump(exitJump)
+		parser.emitByte(OpPop)
+	}
+
+	parser.endScope()
+}
+
+func (parser *Parser) emitLoop(loopStart int) {
+	parser.emitByte(OpLoop)
+
+	offset := parser.currentChunk().count() - loopStart + 2
+	if offset > math.MaxUint16 {
+		parser.error("Loop body too large.")
+	}
+
+	parser.emitByte(OpCode((offset >> 8) & 0xff))
+	parser.emitByte(OpCode(offset & 0xff))
+}
+
 func (parser *Parser) printStatement() {
 	parser.expression()
 	parser.consume(Semicolon, "Expect ';' after value.")
-	parser.emitOp(OpPrint)
+	parser.emitByte(OpPrint)
 }
 
 func (parser *Parser) expressionStatement() {
 	parser.expression()
 	parser.consume(Semicolon, "Expect ';' after expression.")
-	parser.emitOp(OpPop)
+	parser.emitByte(OpPop)
 }
 
 func (parser *Parser) expression() {
@@ -310,9 +391,9 @@ func (parser *Parser) unary(canAssign bool) {
 	// Emit the operator instruction.
 	switch operatorType {
 	case Bang:
-		parser.emitOp(OpNot)
+		parser.emitByte(OpNot)
 	case Minus:
-		parser.emitOp(OpNegate)
+		parser.emitByte(OpNegate)
 	default:
 		return // Unreachable.
 	}
@@ -325,25 +406,25 @@ func (parser *Parser) binary(canAssign bool) {
 
 	switch operatorType {
 	case BangEqual:
-		parser.emitOps(OpEqual, OpNot)
+		parser.emitBytes(OpEqual, OpNot)
 	case EqualEqual:
-		parser.emitOp(OpEqual)
+		parser.emitByte(OpEqual)
 	case Greater:
-		parser.emitOp(OpGreater)
+		parser.emitByte(OpGreater)
 	case GreaterEqual:
-		parser.emitOps(OpLess, OpNot)
+		parser.emitBytes(OpLess, OpNot)
 	case Less:
-		parser.emitOp(OpLess)
+		parser.emitByte(OpLess)
 	case LessEqual:
-		parser.emitOps(OpGreater, OpNot)
+		parser.emitBytes(OpGreater, OpNot)
 	case Plus:
-		parser.emitOp(OpAdd)
+		parser.emitByte(OpAdd)
 	case Minus:
-		parser.emitOp(OpSubtract)
+		parser.emitByte(OpSubtract)
 	case Star:
-		parser.emitOp(OpMultiply)
+		parser.emitByte(OpMultiply)
 	case Slash:
-		parser.emitOp(OpDivide)
+		parser.emitByte(OpDivide)
 	default:
 	}
 }
@@ -351,11 +432,11 @@ func (parser *Parser) binary(canAssign bool) {
 func (parser *Parser) literal(canAssign bool) {
 	switch parser.previous.Type {
 	case False:
-		parser.emitOp(OpFalse)
+		parser.emitByte(OpFalse)
 	case Nil:
-		parser.emitOp(OpNil)
+		parser.emitByte(OpNil)
 	case True:
-		parser.emitOp(OpTrue)
+		parser.emitByte(OpTrue)
 	default:
 	}
 }
@@ -375,7 +456,7 @@ func (parser *Parser) namedVariable(name Token, canAssign bool) {
 
 	if found {
 		getOp = OpGetLocal
-		setOp = OpSetGlobal
+		setOp = OpSetLocal
 	} else {
 		arg = parser.identifierConstant(name)
 		getOp = OpGetGlobal
@@ -384,16 +465,16 @@ func (parser *Parser) namedVariable(name Token, canAssign bool) {
 
 	if canAssign && parser.match(Equal) {
 		parser.expression()
-		parser.emitOps(setOp, arg)
+		parser.emitBytes(setOp, arg)
 	} else {
-		parser.emitOps(getOp, arg)
+		parser.emitBytes(getOp, arg)
 	}
 }
 
 func (parser *Parser) and(canAssign bool) {
 	endJump := parser.emitJump(OpJumpIfFalse)
 
-	parser.emitOp(OpPop)
+	parser.emitByte(OpPop)
 	parser.parsePrecedence(PrecedenceAnd)
 
 	parser.patchJump(endJump)
@@ -405,7 +486,7 @@ func (parser *Parser) or(canAssign bool) {
 
 	parser.patchJump(elseJump)
 
-	parser.emitOp(OpPop)
+	parser.emitByte(OpPop)
 	parser.parsePrecedence(PrecedenceOr)
 
 	parser.patchJump(endJump)
@@ -469,20 +550,20 @@ func (parser *Parser) currentChunk() *Chunk {
 }
 
 func (parser *Parser) emitReturn() {
-	parser.emitOp(OpReturn)
+	parser.emitByte(OpReturn)
 }
 
-func (parser *Parser) emitOp(op OpCode) {
+func (parser *Parser) emitByte(op OpCode) {
 	parser.currentChunk().Write(op, parser.previous.Line)
 }
 
-func (parser *Parser) emitOps(op1, op2 OpCode) {
-	parser.emitOp(op1)
-	parser.emitOp(op2)
+func (parser *Parser) emitBytes(op1, op2 OpCode) {
+	parser.emitByte(op1)
+	parser.emitByte(op2)
 }
 
 func (parser *Parser) emitConstant(value Value) {
-	parser.emitOps(OpConstant, parser.makeConstant(value))
+	parser.emitBytes(OpConstant, parser.makeConstant(value))
 }
 
 func (parser *Parser) makeConstant(value Value) OpCode {
