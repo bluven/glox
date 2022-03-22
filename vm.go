@@ -184,6 +184,13 @@ func (vm *VM) run() InterpretResult {
 		case OpSetLocal:
 			index := vm.readByte()
 			vm.stack[index] = vm.peek(0)
+		case OpJumpIfFalse:
+			offset := vm.readShort()
+			if vm.peek(0).IsFalsey() {
+				vm.ip += uint(offset)
+			}
+		case OpJump:
+			vm.ip += uint(vm.readShort())
 		case OpReturn:
 			return InterpretOK
 		}
@@ -213,6 +220,11 @@ func (vm *VM) readByte() OpCode {
 	op := vm.chunk.codes[vm.ip]
 	vm.ip += 1
 	return op
+}
+
+func (vm *VM) readShort() uint16 {
+	vm.ip += 2
+	return uint16(vm.chunk.codes[vm.ip-2]<<8 | vm.chunk.codes[vm.ip-1])
 }
 
 func (vm *VM) readConstant() Value {

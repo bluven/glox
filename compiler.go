@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 )
@@ -15,7 +16,10 @@ type ParseRule struct {
 	Precedence Precedence
 }
 
-const MaxUint8 = 256
+const (
+	MaxUint8  = 256
+	MaxUint16 = 65535
+)
 
 const (
 	PrecedenceNone       Precedence = iota
@@ -169,6 +173,8 @@ func (parser *Parser) declareVariable() {
 func (parser *Parser) statement() {
 	if parser.match(Print) {
 		parser.printStatement()
+	} else if parser.match(If) {
+		parser.ifStatement()
 	} else if parser.match(LeftBrace) {
 		parser.beginScope()
 		parser.block()
@@ -193,6 +199,45 @@ func (parser *Parser) endScope() {
 		localCount -= 1
 	}
 	parser.compiler.Locals = locals[:localCount]
+}
+
+func (parser *Parser) ifStatement() {
+	parser.consume(LeftParen, "Expect '(' after 'if'.")
+	parser.expression()
+	parser.consume(RightParen, "Expect ')' after condition.")
+
+	thenJump := parser.emitJump(OpJumpIfFalse)
+	parser.emitOp(OpPop)
+	parser.statement()
+
+	elseJump := parser.emitJump(OpJump)
+	parser.patchJump(thenJump)
+
+	parser.emitOp(OpPop)
+	if parser.match(Else) {
+		parser.statement()
+	}
+	parser.patchJump(elseJump)
+}
+
+func (parser *Parser) emitJump(op OpCode) int {
+	parser.emitOp(op)
+	parser.emitOp(0xff)
+	parser.emitOp(0xff)
+	return len(parser.currentChunk().codes) - 2
+}
+
+func (parser *Parser) patchJump(offset int) {
+	// -2 to adjust for the bytecode for the jump offset itself.
+	chunk := parser.currentChunk()
+	jump := len(chunk.codes) - offset - 2
+
+	if jump > math.MaxUint16 {
+		parser.error("Too much code to jump over.")
+	}
+
+	chunk.codes[offset] = OpCode((jump >> 8) & 0xff)
+	chunk.codes[offset+1] = OpCode(jump & 0xff)
 }
 
 func (parser *Parser) printStatement() {

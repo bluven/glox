@@ -26,6 +26,8 @@ const (
 	OpSetGlobal
 	OpGetLocal
 	OpSetLocal
+	OpJump
+	OpJumpIfFalse
 )
 
 type Chunk struct {
@@ -119,6 +121,10 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return c.byteInstruction("OP_GET_LOCAL", offset)
 	case OpSetLocal:
 		return c.byteInstruction("OP_SET_LOCAL", offset)
+	case OpJump:
+		return c.jumpInstruction("OP_JUMP", 1, offset)
+	case OpJumpIfFalse:
+		return c.jumpInstruction("OP_JUMP_IF_FALSE", 1, offset)
 	default:
 		fmt.Printf("Unknown opcode %d\n", op)
 		return offset + 1
@@ -143,4 +149,11 @@ func (c *Chunk) byteInstruction(name string, offset int) int {
 	slot := c.codes[offset+1]
 	fmt.Printf("%-16s %4d\n", name, slot)
 	return offset + 2
+}
+
+func (c *Chunk) jumpInstruction(name string, sign int, offset int) int {
+	jump := c.codes[offset+1] << 8
+	jump |= c.codes[offset+2]
+	fmt.Printf("%-16s %4d -> %d\n", name, offset, offset+3+sign*int(jump))
+	return offset + 3
 }
