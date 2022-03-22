@@ -390,6 +390,27 @@ func (parser *Parser) namedVariable(name Token, canAssign bool) {
 	}
 }
 
+func (parser *Parser) and(canAssign bool) {
+	endJump := parser.emitJump(OpJumpIfFalse)
+
+	parser.emitOp(OpPop)
+	parser.parsePrecedence(PrecedenceAnd)
+
+	parser.patchJump(endJump)
+}
+
+func (parser *Parser) or(canAssign bool) {
+	elseJump := parser.emitJump(OpJumpIfFalse)
+	endJump := parser.emitJump(OpJump)
+
+	parser.patchJump(elseJump)
+
+	parser.emitOp(OpPop)
+	parser.parsePrecedence(PrecedenceOr)
+
+	parser.patchJump(endJump)
+}
+
 func (parser *Parser) synchronize() {
 	parser.panicMode = false
 
@@ -501,7 +522,7 @@ func (parser *Parser) buildParseRuleTable() {
 		Identifier:   {Prefix: parser.variable, Infix: nil, Precedence: PrecedenceNone},
 		String:       {Prefix: parser.string, Infix: nil, Precedence: PrecedenceNone},
 		Number:       {Prefix: parser.number, Infix: nil, Precedence: PrecedenceNone},
-		And:          {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
+		And:          {Prefix: nil, Infix: parser.and, Precedence: PrecedenceAnd},
 		Class:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Else:         {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		False:        {Prefix: parser.literal, Infix: nil, Precedence: PrecedenceNone},
@@ -509,7 +530,7 @@ func (parser *Parser) buildParseRuleTable() {
 		Fun:          {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		If:           {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Nil:          {Prefix: parser.literal, Infix: nil, Precedence: PrecedenceNone},
-		Or:           {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
+		Or:           {Prefix: nil, Infix: parser.or, Precedence: PrecedenceOr},
 		Print:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Return:       {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Super:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
