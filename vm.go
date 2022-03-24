@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 )
 
@@ -12,7 +13,8 @@ const (
 	InterpretCompileError
 	InterpretRuntimeError
 
-	StackMax = 256
+	FrameMax = 64
+	StackMax = FrameMax * math.MaxUint8
 )
 
 type BinaryOp func(v1, v2 float64) interface{}
@@ -30,13 +32,13 @@ type VM struct {
 	traceExecution bool
 	disassemble    bool
 
-	chunk   *Chunk
 	ip      uint
 	objects *Object
 	globals map[string]Value
 
 	stack    [StackMax]Value
-	stackTop int
+	frames   []*CallFrame
+	stackTop uint
 }
 
 func NewVM(disassemble, traceExecution bool) *VM {
@@ -50,11 +52,12 @@ func NewVM(disassemble, traceExecution bool) *VM {
 
 func (vm *VM) init() {
 	vm.resetStack()
+	vm.globals = make(map[string]Value)
+	vm.frames = make([]*CallFrame, 0, FrameMax)
 }
 
 func (vm *VM) resetStack() {
 	vm.stackTop = 0
-	vm.globals = make(map[string]Value)
 }
 
 func (vm *VM) push(value Value) {
@@ -67,7 +70,7 @@ func (vm *VM) pop() Value {
 	return vm.stack[vm.stackTop]
 }
 
-func (vm *VM) peek(distance int) Value {
+func (vm *VM) peek(distance uint) Value {
 	return vm.stack[vm.stackTop-distance-1]
 }
 
@@ -77,12 +80,13 @@ func (vm *VM) Free() {
 }
 
 func (vm *VM) Interpret(source string) InterpretResult {
-	chunk, ok := NewParser(source, vm.disassemble).compile()
+	fn, ok := NewParser(source, vm.disassemble).compile()
 	if !ok {
 		return InterpretCompileError
 	}
 
-	vm.chunk = chunk
+	vm.push(functionValue(fn))
+	vm.call(fn, 0)
 	vm.ip = 0
 	return vm.run()
 }
@@ -92,13 +96,13 @@ func (vm *VM) run() InterpretResult {
 		instruction := vm.readByte()
 		if vm.traceExecution {
 			fmt.Printf("          ")
-			for i := 0; i < vm.stackTop; i++ {
+			for i := uint(0); i < vm.stackTop; i++ {
 				fmt.Printf("[ ")
 				vm.stack[i].Print()
 				fmt.Printf(" ]")
 			}
 			fmt.Printf("\n")
-			vm.chunk.disassembleInstruction(int(vm.ip - 1))
+			vm.currentFrame().function.Chunk.disassembleInstruction(int(vm.ip - 1))
 		}
 		switch instruction {
 		case OpConstant:
@@ -179,24 +183,56 @@ func (vm *VM) run() InterpretResult {
 			vm.pop()
 			break
 		case OpGetLocal:
-			index := vm.readByte()
-			vm.push(vm.stack[index])
+			slot := vm.currentFrame().slot + uint(vm.readByte())
+			vm.push(vm.stack[slot])
 		case OpSetLocal:
-			index := vm.readByte()
-			vm.stack[index] = vm.peek(0)
+			slot := vm.currentFrame().slot + uint(vm.readByte())
+			vm.stack[slot] = vm.peek(0)
 		case OpJumpIfFalse:
 			offset := vm.readShort()
 			if vm.peek(0).IsFalsey() {
-				vm.ip += uint(offset)
+				vm.currentFrame().ip += uint(offset)
 			}
 		case OpJump:
-			vm.ip += uint(vm.readShort())
+			vm.currentFrame().ip += uint(vm.readShort())
 		case OpLoop:
-			vm.ip -= uint(vm.readShort())
+			vm.currentFrame().ip -= uint(vm.readShort())
+		case OpCall:
+			argCount := uint(vm.readByte())
+			if !vm.callValue(vm.peek(argCount), argCount) {
+				return InterpretRuntimeError
+			}
 		case OpReturn:
 			return InterpretOK
 		}
 	}
+}
+
+func (vm *VM) callValue(callee Value, argCount uint) bool {
+	if callee.IsFunction() {
+		return vm.call(callee.Function(), argCount)
+	}
+	vm.runtimeError("Can only call functions and classes.")
+	return false
+}
+
+func (vm *VM) call(fn *Function, argCount uint) bool {
+	if argCount != fn.Arity {
+		vm.runtimeError("Expected %d arguments but got %d.", fn.Arity, argCount)
+		return false
+	}
+
+	if len(vm.frames) >= FrameMax {
+		vm.runtimeError("Stack overflow.")
+		return false
+	}
+
+	vm.frames = append(vm.frames, &CallFrame{
+		function: fn,
+		ip:       0,
+		slot:     vm.stackTop - argCount - 1,
+	})
+	return true
 }
 
 func (vm *VM) allocateObject(v interface{}) *Object {
@@ -219,23 +255,28 @@ func (vm *VM) freeObjects() {
 }
 
 func (vm *VM) readByte() OpCode {
-	op := vm.chunk.codes[vm.ip]
+	op := vm.currentFrame().function.Chunk.codes[vm.ip]
 	vm.ip += 1
 	return op
 }
 
 func (vm *VM) readShort() uint16 {
 	vm.ip += 2
-	return uint16(vm.chunk.codes[vm.ip-2]<<8 | vm.chunk.codes[vm.ip-1])
+	chunk := vm.currentFrame().function.Chunk
+	return uint16(chunk.codes[vm.ip-2]<<8 | chunk.codes[vm.ip-1])
 }
 
 func (vm *VM) readConstant() Value {
 	ci := vm.readByte()
-	return vm.chunk.constants[ci]
+	return vm.currentFrame().function.Chunk.constants[ci]
 }
 
 func (vm *VM) readString() string {
 	return vm.readConstant().String()
+}
+
+func (vm *VM) currentFrame() *CallFrame {
+	return vm.frames[len(vm.frames)-1]
 }
 
 func (vm *VM) binaryOp(op BinaryOp, valueFn ValueFn) InterpretResult {
@@ -253,7 +294,26 @@ func (vm *VM) runtimeError(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, format, args...)
 	fmt.Fprintf(os.Stderr, "\n")
 
-	line := vm.chunk.lines[vm.ip-1]
+	line := vm.currentFrame().function.Chunk.lines[vm.ip-1]
 	fmt.Fprintf(os.Stderr, "[line %d] in script\n", line)
+
+	for i := len(vm.frames) - 1; i >= 0; i-- {
+		frame := vm.frames[i]
+		fn := frame.function
+		instruction := frame.ip - 1
+		fmt.Fprintf(os.Stderr, "[line %d] in ", fn.Chunk.lines[instruction])
+		if fn.Name == "" {
+			fmt.Fprintf(os.Stderr, "script\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "%s()\n", fn.Name)
+		}
+	}
+
 	vm.resetStack()
+}
+
+type CallFrame struct {
+	function *Function
+	ip       uint
+	slot     uint
 }

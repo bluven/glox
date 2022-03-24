@@ -11,6 +11,7 @@ const (
 	ValueNumber
 	ValueObject
 	ValueString
+	ValueFunction
 )
 
 type Value struct {
@@ -43,6 +44,10 @@ func objectValue(v interface{}) Value {
 	return Value{Type: ValueObject, Raw: v}
 }
 
+func functionValue(v interface{}) Value {
+	return Value{Type: ValueFunction, Raw: v}
+}
+
 func stringValue(v interface{}) Value {
 	return Value{Type: ValueString, Raw: v}
 }
@@ -65,6 +70,10 @@ func (v Value) IsNumber() bool {
 
 func (v Value) IsObject() bool {
 	return v.Type == ValueObject
+}
+
+func (v Value) IsFunction() bool {
+	return v.Type == ValueFunction
 }
 
 func (v Value) IsString() bool {
@@ -91,6 +100,10 @@ func (v Value) String() string {
 	return v.Raw.(string)
 }
 
+func (v Value) Function() *Function {
+	return v.Raw.(*Function)
+}
+
 func (v Value) Print() {
 	switch v.Type {
 	case ValueBool:
@@ -101,6 +114,8 @@ func (v Value) Print() {
 		fmt.Printf("%g", v.Number())
 	case ValueString:
 		fmt.Printf("%s", v.Raw)
+	case ValueFunction:
+		fmt.Printf("%s", v.Raw.(*Function).Name)
 	case ValueObject:
 		panic("not implemented")
 	}

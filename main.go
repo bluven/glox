@@ -8,15 +8,20 @@ import (
 	"os"
 )
 
-var (
-	disassemble    = flag.Bool("disassemble", false, "")
-	traceExecution = flag.Bool("trace-execution", false, "")
-)
-
 func main() {
+	var (
+		disassemble    bool
+		traceExecution bool
+	)
+
+	flag.BoolVar(&disassemble, "disassemble", false, "")
+	flag.BoolVar(&disassemble, "d", false, "")
+	flag.BoolVar(&traceExecution, "trace-execution", false, "")
+	flag.BoolVar(&traceExecution, "t", false, "")
+
 	flag.Parse()
 
-	vm := NewVM(*disassemble, *traceExecution)
+	vm := NewVM(disassemble, traceExecution)
 	argc := len(flag.Args())
 	if argc == 0 {
 		repl(vm)

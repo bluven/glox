@@ -29,6 +29,7 @@ const (
 	OpJump
 	OpJumpIfFalse
 	OpLoop
+	OpCall
 )
 
 type Chunk struct {
@@ -132,6 +133,8 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return c.jumpInstruction("OP_JUMP_IF_FALSE", 1, offset)
 	case OpLoop:
 		return c.jumpInstruction("OP_LOOP", -1, offset)
+	case OpCall:
+		return c.byteInstruction("OP_CALL", offset)
 	default:
 		fmt.Printf("Unknown opcode %d\n", op)
 		return offset + 1

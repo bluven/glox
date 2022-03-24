@@ -19,3 +19,17 @@ func (obj *Object) Equal(obj2 *Object) bool {
 
 	return obj.Data == obj.Data
 }
+
+type Function struct {
+	Arity uint
+	Chunk *Chunk
+	Name  string
+}
+
+func newFunction(name string) *Function {
+	return &Function{
+		Name:  name,
+		Arity: 0,
+		Chunk: NewChunk(),
+	}
+}

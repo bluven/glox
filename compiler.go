@@ -17,11 +17,6 @@ type ParseRule struct {
 }
 
 const (
-	MaxUint8  = 256
-	MaxUint16 = 65535
-)
-
-const (
 	PrecedenceNone       Precedence = iota
 	PrecedenceAssigment             // =
 	PrecedenceOr                    // or
@@ -33,6 +28,13 @@ const (
 	PrecedenceUnary                 // ! -
 	PrecedenceCall                  // . ()
 	PrecedencePrimary
+)
+
+type FunctionType int
+
+const (
+	FunctionFunction = iota
+	FunctionScript
 )
 
 type Parser struct {
@@ -52,7 +54,7 @@ func NewParser(source string, disassemble bool) *Parser {
 	parser := &Parser{
 		scanner:     NewScanner(source),
 		chunk:       NewChunk(),
-		compiler:    newCompiler(),
+		compiler:    newCompiler("", FunctionScript),
 		disassemble: disassemble,
 	}
 	parser.buildParseRuleTable()
@@ -60,14 +62,15 @@ func NewParser(source string, disassemble bool) *Parser {
 	return parser
 }
 
-func (parser *Parser) compile() (*Chunk, bool) {
+func (parser *Parser) compile() (*Function, bool) {
 	parser.advance()
 	for !parser.match(EOF) {
 		parser.declaration()
 	}
 	parser.consume(EOF, "Expect end of expression.")
-	parser.endCompiler()
-	return parser.chunk, !parser.hadError
+
+	fn := parser.endCompiler()
+	return fn, !parser.hadError
 }
 
 func (parser *Parser) advance() {
@@ -105,9 +108,12 @@ func (parser *Parser) check(tt TokenType) bool {
 }
 
 func (parser *Parser) declaration() {
-	if parser.match(Var) {
+	switch {
+	case parser.match(Fun):
+		parser.funDeclaration()
+	case parser.match(Var):
 		parser.varDeclaration()
-	} else {
+	default:
 		parser.statement()
 	}
 
@@ -126,6 +132,13 @@ func (parser *Parser) varDeclaration() {
 	}
 	parser.consume(Semicolon, "Expect ';' after variable declaration.")
 
+	parser.defineVariable(global)
+}
+
+func (parser *Parser) funDeclaration() {
+	global := parser.parseVariable("Expect function name.")
+	parser.compiler.markInitialized()
+	parser.function(FunctionFunction)
 	parser.defineVariable(global)
 }
 
@@ -168,6 +181,43 @@ func (parser *Parser) declareVariable() {
 	if err != nil {
 		parser.error("Too many local variables in function.")
 	}
+}
+
+func (parser *Parser) function(ft FunctionType) {
+	current := parser.pushCompiler(ft)
+	parser.beginScope()
+
+	parser.consume(LeftParen, "Expect '(' after function name.")
+	if !parser.check(RightParen) {
+		for {
+			current.Function.Arity++
+			if current.Function.Arity > 255 {
+				parser.errorAtCurrent("Can't have more than 255 parameters.")
+			}
+
+			ci := parser.parseVariable("Expect parameter name.")
+			parser.defineVariable(ci)
+
+			if !parser.match(Comma) {
+				break
+			}
+		}
+	}
+	parser.consume(RightParen, "Expect ')' after parameters.")
+	parser.consume(LeftBrace, "Expect '{' before function body.")
+	parser.block()
+
+	function := parser.endCompiler()
+	parser.emitBytes(OpConstant, parser.makeConstant(functionValue(function)))
+}
+
+func (parser *Parser) pushCompiler(ft FunctionType) *Compiler {
+	compiler := newCompiler(parser.previous.Lexeme, ft)
+	compiler.Enclosing = parser.compiler
+	parser.compiler = compiler
+	fmt.Println("----- push-------", compiler.Enclosing.Function.Name)
+
+	return compiler
 }
 
 func (parser *Parser) statement() {
@@ -492,6 +542,30 @@ func (parser *Parser) or(canAssign bool) {
 	parser.patchJump(endJump)
 }
 
+func (parser *Parser) call(canAssign bool) {
+	argCount := parser.argumentList()
+	parser.emitBytes(OpCall, OpCode(argCount))
+}
+
+func (parser *Parser) argumentList() uint {
+	var argCount uint = 0
+	if !parser.check(RightParen) {
+		for {
+			parser.expression()
+			argCount += 1
+
+			if argCount == 255 {
+				parser.error("Can't have more than 255 arguments.")
+			}
+			if !parser.match(Comma) {
+				break
+			}
+		}
+	}
+	parser.consume(RightParen, "Expect ')' after arguments.")
+	return argCount
+}
+
 func (parser *Parser) synchronize() {
 	parser.panicMode = false
 
@@ -510,11 +584,21 @@ func (parser *Parser) synchronize() {
 	}
 }
 
-func (parser *Parser) endCompiler() {
+func (parser *Parser) endCompiler() *Function {
 	parser.emitReturn()
+
+	function := parser.compiler.Function
+	parser.compiler = parser.compiler.Enclosing
+
 	if parser.disassemble {
-		parser.currentChunk().DisassembleChunk("code")
+		name := "<script>"
+		if function.Name != "" {
+			name = function.Name
+		}
+		function.Chunk.DisassembleChunk(name)
 	}
+
+	return function
 }
 
 func (parser *Parser) errorAtCurrent(msg string) {
@@ -546,7 +630,8 @@ func (parser *Parser) errorAt(token Token, msg string) {
 }
 
 func (parser *Parser) currentChunk() *Chunk {
-	return parser.chunk
+	//fmt.Println("current chunk", parser.compiler)
+	return parser.compiler.Function.Chunk
 }
 
 func (parser *Parser) emitReturn() {
@@ -568,7 +653,7 @@ func (parser *Parser) emitConstant(value Value) {
 
 func (parser *Parser) makeConstant(value Value) OpCode {
 	ci := parser.currentChunk().AddConstant(value)
-	if ci > MaxUint8 {
+	if ci > math.MaxUint8 {
 		parser.error("Too many constants in one chunk.")
 		return 0
 	}
@@ -582,7 +667,7 @@ func (parser *Parser) getRule(tt TokenType) ParseRule {
 
 func (parser *Parser) buildParseRuleTable() {
 	parser.rules = map[TokenType]ParseRule{
-		LeftParen:    {Prefix: parser.group, Infix: nil, Precedence: PrecedenceNone},
+		LeftParen:    {Prefix: parser.group, Infix: parser.call, Precedence: PrecedenceCall},
 		RightParen:   {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		LeftBrace:    {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		RightBrace:   {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
@@ -631,14 +716,26 @@ type Local struct {
 
 type Compiler struct {
 	Locals     []Local
+	Function   *Function
+	Type       FunctionType
 	ScopeDepth int
+	Enclosing  *Compiler
 }
 
-func newCompiler() *Compiler {
-	return &Compiler{
-		Locals:     make([]Local, 0, MaxUint8),
+func newCompiler(functionName string, ft FunctionType) *Compiler {
+	compiler := &Compiler{
+		Locals:     make([]Local, 0, math.MaxUint8),
 		ScopeDepth: 0,
+		Type:       ft,
+		Function:   newFunction(functionName),
 	}
+
+	compiler.Locals = append(compiler.Locals, Local{
+		Name:  Token{Type: Error, Lexeme: "", Line: 0},
+		Depth: 0,
+	})
+
+	return compiler
 }
 
 func (compiler *Compiler) resolveLocal(name Token) (OpCode, bool, error) {
@@ -656,6 +753,10 @@ func (compiler *Compiler) resolveLocal(name Token) (OpCode, bool, error) {
 }
 
 func (compiler *Compiler) markInitialized() {
+	if compiler.ScopeDepth == 0 {
+		return
+	}
+
 	compiler.Locals[len(compiler.Locals)-1].Depth = compiler.ScopeDepth
 }
 
@@ -675,7 +776,7 @@ func (compiler *Compiler) isLocalDeclared(name Token) bool {
 }
 
 func (compiler *Compiler) addLocal(name Token) error {
-	if len(compiler.Locals) > MaxUint8 {
+	if len(compiler.Locals) > math.MaxUint8 {
 		return errors.New("Too many local variables in function.")
 	}
 
