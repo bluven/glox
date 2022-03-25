@@ -12,6 +12,7 @@ const (
 	ValueObject
 	ValueString
 	ValueFunction
+	ValueNativeFunction
 )
 
 type Value struct {
@@ -48,6 +49,10 @@ func functionValue(v interface{}) Value {
 	return Value{Type: ValueFunction, Raw: v}
 }
 
+func nativeFunctionValue(v interface{}) Value {
+	return Value{Type: ValueNativeFunction, Raw: v}
+}
+
 func stringValue(v interface{}) Value {
 	return Value{Type: ValueString, Raw: v}
 }
@@ -76,6 +81,10 @@ func (v Value) IsFunction() bool {
 	return v.Type == ValueFunction
 }
 
+func (v Value) IsNativeFunction() bool {
+	return v.Type == ValueNativeFunction
+}
+
 func (v Value) IsString() bool {
 	return v.Type == ValueString
 }
@@ -102,6 +111,10 @@ func (v Value) String() string {
 
 func (v Value) Function() *Function {
 	return v.Raw.(*Function)
+}
+
+func (v Value) NativeFunction() NativeFunction {
+	return v.Raw.(NativeFunction)
 }
 
 func (v Value) Print() {

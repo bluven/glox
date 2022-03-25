@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"time"
 )
 
 type InterpretResult int
@@ -32,7 +33,6 @@ type VM struct {
 	traceExecution bool
 	disassemble    bool
 
-	ip      uint
 	objects *Object
 	globals map[string]Value
 
@@ -54,6 +54,8 @@ func (vm *VM) init() {
 	vm.resetStack()
 	vm.globals = make(map[string]Value)
 	vm.frames = make([]*CallFrame, 0, FrameMax)
+
+	vm.newNative("clock", clockNative)
 }
 
 func (vm *VM) resetStack() {
@@ -87,7 +89,6 @@ func (vm *VM) Interpret(source string) InterpretResult {
 
 	vm.push(functionValue(fn))
 	vm.call(fn, 0)
-	vm.ip = 0
 	return vm.run()
 }
 
@@ -102,7 +103,8 @@ func (vm *VM) run() InterpretResult {
 				fmt.Printf(" ]")
 			}
 			fmt.Printf("\n")
-			vm.currentFrame().function.Chunk.disassembleInstruction(int(vm.ip - 1))
+			frame := vm.currentFrame()
+			frame.function.Chunk.disassembleInstruction(int(frame.ip - 1))
 		}
 		switch instruction {
 		case OpConstant:
@@ -203,15 +205,38 @@ func (vm *VM) run() InterpretResult {
 				return InterpretRuntimeError
 			}
 		case OpReturn:
-			return InterpretOK
+			result := vm.pop()
+
+			frame := vm.frames[len(vm.frames)-1]
+			vm.frames = vm.frames[:len(vm.frames)-1]
+
+			if len(vm.frames) == 0 {
+				vm.pop()
+				return InterpretOK
+			}
+
+			vm.stackTop = frame.slot
+			vm.push(result)
 		}
 	}
 }
 
+func (vm *VM) newNative(name string, fn NativeFunction) {
+	vm.globals[name] = nativeFunctionValue(fn)
+}
+
 func (vm *VM) callValue(callee Value, argCount uint) bool {
-	if callee.IsFunction() {
+	switch callee.Type {
+	case ValueFunction:
 		return vm.call(callee.Function(), argCount)
+	case ValueNativeFunction:
+		values := vm.stack[vm.stackTop-argCount:]
+		result := callee.NativeFunction()(values)
+		vm.stackTop -= argCount + 1
+		vm.push(result)
+		return true
 	}
+
 	vm.runtimeError("Can only call functions and classes.")
 	return false
 }
@@ -255,15 +280,17 @@ func (vm *VM) freeObjects() {
 }
 
 func (vm *VM) readByte() OpCode {
-	op := vm.currentFrame().function.Chunk.codes[vm.ip]
-	vm.ip += 1
+	frame := vm.currentFrame()
+	op := frame.function.Chunk.codes[frame.ip]
+	frame.ip += 1
 	return op
 }
 
 func (vm *VM) readShort() uint16 {
-	vm.ip += 2
+	frame := vm.currentFrame()
+	frame.ip += 2
 	chunk := vm.currentFrame().function.Chunk
-	return uint16(chunk.codes[vm.ip-2]<<8 | chunk.codes[vm.ip-1])
+	return uint16(chunk.codes[frame.ip-2]<<8 | chunk.codes[frame.ip-1])
 }
 
 func (vm *VM) readConstant() Value {
@@ -294,7 +321,8 @@ func (vm *VM) runtimeError(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, format, args...)
 	fmt.Fprintf(os.Stderr, "\n")
 
-	line := vm.currentFrame().function.Chunk.lines[vm.ip-1]
+	frame := vm.currentFrame()
+	line := frame.function.Chunk.lines[frame.ip-1]
 	fmt.Fprintf(os.Stderr, "[line %d] in script\n", line)
 
 	for i := len(vm.frames) - 1; i >= 0; i-- {
@@ -316,4 +344,8 @@ type CallFrame struct {
 	function *Function
 	ip       uint
 	slot     uint
+}
+
+func clockNative(args []Value) Value {
+	return numberValue(float64(time.Now().Unix()))
 }

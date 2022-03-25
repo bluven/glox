@@ -215,7 +215,6 @@ func (parser *Parser) pushCompiler(ft FunctionType) *Compiler {
 	compiler := newCompiler(parser.previous.Lexeme, ft)
 	compiler.Enclosing = parser.compiler
 	parser.compiler = compiler
-	fmt.Println("----- push-------", compiler.Enclosing.Function.Name)
 
 	return compiler
 }
@@ -226,6 +225,8 @@ func (parser *Parser) statement() {
 		parser.printStatement()
 	case parser.match(If):
 		parser.ifStatement()
+	case parser.match(Return):
+		parser.returnStatement()
 	case parser.match(LeftBrace):
 		parser.beginScope()
 		parser.block()
@@ -375,6 +376,20 @@ func (parser *Parser) printStatement() {
 	parser.expression()
 	parser.consume(Semicolon, "Expect ';' after value.")
 	parser.emitByte(OpPrint)
+}
+
+func (parser *Parser) returnStatement() {
+	if parser.compiler.Type == FunctionScript {
+		parser.error("Can't return from top-level code.")
+	}
+
+	if parser.match(Semicolon) {
+		parser.emitReturn()
+	} else {
+		parser.expression()
+		parser.consume(Semicolon, "Expect ';' after return value.")
+		parser.emitByte(OpReturn)
+	}
 }
 
 func (parser *Parser) expressionStatement() {
@@ -585,6 +600,7 @@ func (parser *Parser) synchronize() {
 }
 
 func (parser *Parser) endCompiler() *Function {
+	parser.emitByte(OpNil)
 	parser.emitReturn()
 
 	function := parser.compiler.Function
@@ -630,7 +646,6 @@ func (parser *Parser) errorAt(token Token, msg string) {
 }
 
 func (parser *Parser) currentChunk() *Chunk {
-	//fmt.Println("current chunk", parser.compiler)
 	return parser.compiler.Function.Chunk
 }
 

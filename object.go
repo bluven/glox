@@ -33,3 +33,5 @@ func newFunction(name string) *Function {
 		Chunk: NewChunk(),
 	}
 }
+
+type NativeFunction func(values []Value) Value
