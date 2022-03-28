@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-type OpCode uint
+type OpCode = uint
 
 const (
 	OpReturn OpCode = iota
@@ -13,6 +13,7 @@ const (
 	OpTrue
 	OpFalse
 	OpPop
+	OpCloseUpvalue
 	OpEqual
 	OpGreater
 	OpLess
@@ -26,10 +27,13 @@ const (
 	OpSetGlobal
 	OpGetLocal
 	OpSetLocal
+	OpGetUpValue
+	OpSetUpValue
 	OpJump
 	OpJumpIfFalse
 	OpLoop
 	OpCall
+	OpClosure
 )
 
 type Chunk struct {
@@ -117,6 +121,8 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return c.simpleInstruction("OP_PRINT", offset)
 	case OpPop:
 		return c.simpleInstruction("OP_POP", offset)
+	case OpCloseUpvalue:
+		return c.simpleInstruction("OP_CLOSE_UPVALUE", offset)
 	case OpDefineGlobal:
 		return c.constantInstruction("OP_DEFINE_GLOBAL", offset)
 	case OpGetGlobal:
@@ -127,6 +133,10 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return c.byteInstruction("OP_GET_LOCAL", offset)
 	case OpSetLocal:
 		return c.byteInstruction("OP_SET_LOCAL", offset)
+	case OpGetUpValue:
+		return c.byteInstruction("OP_GET_UPVALUE", offset)
+	case OpSetUpValue:
+		return c.byteInstruction("OP_SET_UPVALUE", offset)
 	case OpJump:
 		return c.jumpInstruction("OP_JUMP", 1, offset)
 	case OpJumpIfFalse:
@@ -135,6 +145,25 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return c.jumpInstruction("OP_LOOP", -1, offset)
 	case OpCall:
 		return c.byteInstruction("OP_CALL", offset)
+	case OpClosure:
+		constant := c.codes[offset+1]
+		fmt.Printf("%-16s %4d ", "OP_CLOSURE", constant)
+		c.constants[constant].Print()
+		fmt.Println()
+		offset += 2
+
+		function := c.constants[constant].Function()
+		for range function.Upvalues {
+			t := "local"
+			if c.codes[offset] == 0 {
+				t = "upvalue"
+			}
+			index := c.codes[offset+1]
+			fmt.Printf("%04d      |                     %s %d\n", offset, t, index)
+			offset += 2
+		}
+
+		return offset
 	default:
 		fmt.Printf("Unknown opcode %d\n", op)
 		return offset + 1

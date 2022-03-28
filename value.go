@@ -13,6 +13,7 @@ const (
 	ValueString
 	ValueFunction
 	ValueNativeFunction
+	ValueClosure
 )
 
 type Value struct {
@@ -45,7 +46,7 @@ func objectValue(v interface{}) Value {
 	return Value{Type: ValueObject, Raw: v}
 }
 
-func functionValue(v interface{}) Value {
+func functionValue(v *Function) Value {
 	return Value{Type: ValueFunction, Raw: v}
 }
 
@@ -55,6 +56,10 @@ func nativeFunctionValue(v interface{}) Value {
 
 func stringValue(v interface{}) Value {
 	return Value{Type: ValueString, Raw: v}
+}
+
+func closureValue(v *Closure) Value {
+	return Value{Type: ValueClosure, Raw: v}
 }
 
 func (v Value) IsFalsey() bool {
@@ -85,6 +90,10 @@ func (v Value) IsNativeFunction() bool {
 	return v.Type == ValueNativeFunction
 }
 
+func (v Value) IsClosure() bool {
+	return v.Type == ValueClosure
+}
+
 func (v Value) IsString() bool {
 	return v.Type == ValueString
 }
@@ -111,6 +120,10 @@ func (v Value) String() string {
 
 func (v Value) Function() *Function {
 	return v.Raw.(*Function)
+}
+
+func (v Value) Closure() *Closure {
+	return v.Raw.(*Closure)
 }
 
 func (v Value) NativeFunction() NativeFunction {

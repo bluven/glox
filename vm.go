@@ -36,6 +36,8 @@ type VM struct {
 	objects *Object
 	globals map[string]Value
 
+	openUpvalues *RuntimeUpvalue
+
 	stack    [StackMax]Value
 	frames   []*CallFrame
 	stackTop uint
@@ -87,8 +89,9 @@ func (vm *VM) Interpret(source string) InterpretResult {
 		return InterpretCompileError
 	}
 
-	vm.push(functionValue(fn))
-	vm.call(fn, 0)
+	closure := newClosure(fn)
+	vm.push(closureValue(closure))
+	vm.call(closure, 0)
 	return vm.run()
 }
 
@@ -104,7 +107,7 @@ func (vm *VM) run() InterpretResult {
 			}
 			fmt.Printf("\n")
 			frame := vm.currentFrame()
-			frame.function.Chunk.disassembleInstruction(int(frame.ip - 1))
+			frame.closure.Function.Chunk.disassembleInstruction(int(frame.ip - 1))
 		}
 		switch instruction {
 		case OpConstant:
@@ -161,6 +164,9 @@ func (vm *VM) run() InterpretResult {
 			fmt.Println()
 		case OpPop:
 			vm.pop()
+		case OpCloseUpvalue:
+			vm.closeUpvalues(vm.stackTop - 1)
+			vm.pop()
 		case OpGetGlobal:
 			name := vm.readString()
 			if value, ok := vm.globals[name]; ok {
@@ -185,11 +191,29 @@ func (vm *VM) run() InterpretResult {
 			vm.pop()
 			break
 		case OpGetLocal:
-			slot := vm.currentFrame().slot + uint(vm.readByte())
+			slot := vm.currentFrame().slot + vm.readByte()
 			vm.push(vm.stack[slot])
 		case OpSetLocal:
-			slot := vm.currentFrame().slot + uint(vm.readByte())
+			slot := vm.currentFrame().slot + vm.readByte()
 			vm.stack[slot] = vm.peek(0)
+		case OpGetUpValue:
+			slot := vm.readByte()
+			upvalue := vm.currentClosure().Upvalues[slot]
+
+			var value Value
+			if upvalue.Closed {
+				value = upvalue.Value
+			} else {
+				value = vm.stack[upvalue.Location]
+			}
+			vm.push(value)
+		case OpSetUpValue:
+			upvalue := vm.currentClosure().Upvalues[vm.readByte()]
+			if upvalue.Closed {
+				upvalue.Value = vm.peek(0)
+			} else {
+				vm.stack[upvalue.Location] = vm.peek(0)
+			}
 		case OpJumpIfFalse:
 			offset := vm.readShort()
 			if vm.peek(0).IsFalsey() {
@@ -200,14 +224,28 @@ func (vm *VM) run() InterpretResult {
 		case OpLoop:
 			vm.currentFrame().ip -= uint(vm.readShort())
 		case OpCall:
-			argCount := uint(vm.readByte())
+			argCount := vm.readByte()
 			if !vm.callValue(vm.peek(argCount), argCount) {
 				return InterpretRuntimeError
+			}
+		case OpClosure:
+			closure := newClosure(vm.readConstant().Function())
+			vm.push(closureValue(closure))
+			for i := range closure.Upvalues {
+				isLocal := vm.readByte()
+				index := vm.readByte()
+				if isLocal == 1 {
+					closure.Upvalues[i] = vm.captureUpvalue(vm.currentFrame().slot + index)
+				} else {
+					closure.Upvalues[i] = vm.currentFrame().closure.Upvalues[index]
+				}
 			}
 		case OpReturn:
 			result := vm.pop()
 
 			frame := vm.frames[len(vm.frames)-1]
+			vm.closeUpvalues(frame.slot)
+
 			vm.frames = vm.frames[:len(vm.frames)-1]
 
 			if len(vm.frames) == 0 {
@@ -221,14 +259,47 @@ func (vm *VM) run() InterpretResult {
 	}
 }
 
+func (vm *VM) closeUpvalues(last uint) {
+	for vm.openUpvalues != nil && vm.openUpvalues.Location >= last {
+		upvalue := vm.openUpvalues
+		upvalue.Value = vm.stack[upvalue.Location]
+		upvalue.Closed = true
+		vm.openUpvalues = upvalue.Next
+	}
+}
+
+func (vm *VM) captureUpvalue(local uint) *RuntimeUpvalue {
+	var prevUpvalue *RuntimeUpvalue
+	upvalue := vm.openUpvalues
+	for upvalue != nil && upvalue.Location > local {
+		prevUpvalue = upvalue
+		upvalue = upvalue.Next
+	}
+
+	if upvalue != nil && upvalue.Location == local {
+		return upvalue
+	}
+
+	createdUpvalue := newUpvalue(local)
+	createdUpvalue.Next = upvalue
+
+	if prevUpvalue == nil {
+		vm.openUpvalues = createdUpvalue
+	} else {
+		prevUpvalue.Next = createdUpvalue
+	}
+
+	return createdUpvalue
+}
+
 func (vm *VM) newNative(name string, fn NativeFunction) {
 	vm.globals[name] = nativeFunctionValue(fn)
 }
 
 func (vm *VM) callValue(callee Value, argCount uint) bool {
 	switch callee.Type {
-	case ValueFunction:
-		return vm.call(callee.Function(), argCount)
+	case ValueClosure:
+		return vm.call(callee.Closure(), argCount)
 	case ValueNativeFunction:
 		values := vm.stack[vm.stackTop-argCount:]
 		result := callee.NativeFunction()(values)
@@ -241,9 +312,9 @@ func (vm *VM) callValue(callee Value, argCount uint) bool {
 	return false
 }
 
-func (vm *VM) call(fn *Function, argCount uint) bool {
-	if argCount != fn.Arity {
-		vm.runtimeError("Expected %d arguments but got %d.", fn.Arity, argCount)
+func (vm *VM) call(closure *Closure, argCount uint) bool {
+	if argCount != closure.Function.Arity {
+		vm.runtimeError("Expected %d arguments but got %d.", closure.Function.Arity, argCount)
 		return false
 	}
 
@@ -253,9 +324,9 @@ func (vm *VM) call(fn *Function, argCount uint) bool {
 	}
 
 	vm.frames = append(vm.frames, &CallFrame{
-		function: fn,
-		ip:       0,
-		slot:     vm.stackTop - argCount - 1,
+		closure: closure,
+		ip:      0,
+		slot:    vm.stackTop - argCount - 1,
 	})
 	return true
 }
@@ -281,7 +352,7 @@ func (vm *VM) freeObjects() {
 
 func (vm *VM) readByte() OpCode {
 	frame := vm.currentFrame()
-	op := frame.function.Chunk.codes[frame.ip]
+	op := frame.closure.Function.Chunk.codes[frame.ip]
 	frame.ip += 1
 	return op
 }
@@ -289,13 +360,13 @@ func (vm *VM) readByte() OpCode {
 func (vm *VM) readShort() uint16 {
 	frame := vm.currentFrame()
 	frame.ip += 2
-	chunk := vm.currentFrame().function.Chunk
+	chunk := vm.currentFrame().closure.Function.Chunk
 	return uint16(chunk.codes[frame.ip-2]<<8 | chunk.codes[frame.ip-1])
 }
 
 func (vm *VM) readConstant() Value {
 	ci := vm.readByte()
-	return vm.currentFrame().function.Chunk.constants[ci]
+	return vm.currentFrame().closure.Function.Chunk.constants[ci]
 }
 
 func (vm *VM) readString() string {
@@ -304,6 +375,10 @@ func (vm *VM) readString() string {
 
 func (vm *VM) currentFrame() *CallFrame {
 	return vm.frames[len(vm.frames)-1]
+}
+
+func (vm *VM) currentClosure() *Closure {
+	return vm.frames[len(vm.frames)-1].closure
 }
 
 func (vm *VM) binaryOp(op BinaryOp, valueFn ValueFn) InterpretResult {
@@ -322,12 +397,12 @@ func (vm *VM) runtimeError(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "\n")
 
 	frame := vm.currentFrame()
-	line := frame.function.Chunk.lines[frame.ip-1]
+	line := frame.closure.Function.Chunk.lines[frame.ip-1]
 	fmt.Fprintf(os.Stderr, "[line %d] in script\n", line)
 
 	for i := len(vm.frames) - 1; i >= 0; i-- {
 		frame := vm.frames[i]
-		fn := frame.function
+		fn := frame.closure.Function
 		instruction := frame.ip - 1
 		fmt.Fprintf(os.Stderr, "[line %d] in ", fn.Chunk.lines[instruction])
 		if fn.Name == "" {
@@ -341,9 +416,9 @@ func (vm *VM) runtimeError(format string, args ...interface{}) {
 }
 
 type CallFrame struct {
-	function *Function
-	ip       uint
-	slot     uint
+	closure *Closure
+	ip      uint
+	slot    uint
 }
 
 func clockNative(args []Value) Value {

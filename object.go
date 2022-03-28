@@ -21,9 +21,15 @@ func (obj *Object) Equal(obj2 *Object) bool {
 }
 
 type Function struct {
-	Arity uint
-	Chunk *Chunk
-	Name  string
+	Arity    uint
+	Chunk    *Chunk
+	Name     string
+	Upvalues []Upvalue
+}
+
+type Upvalue struct {
+	Index   uint
+	IsLocal bool
 }
 
 func newFunction(name string) *Function {
@@ -35,3 +41,26 @@ func newFunction(name string) *Function {
 }
 
 type NativeFunction func(values []Value) Value
+
+type Closure struct {
+	Function *Function
+	Upvalues []*RuntimeUpvalue
+}
+
+func newClosure(fn *Function) *Closure {
+	return &Closure{
+		Function: fn,
+		Upvalues: make([]*RuntimeUpvalue, len(fn.Upvalues)),
+	}
+}
+
+type RuntimeUpvalue struct {
+	Location uint
+	Next     *RuntimeUpvalue
+	Value    Value
+	Closed   bool
+}
+
+func newUpvalue(valueIndex uint) *RuntimeUpvalue {
+	return &RuntimeUpvalue{Location: valueIndex}
+}

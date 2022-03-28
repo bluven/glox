@@ -208,7 +208,15 @@ func (parser *Parser) function(ft FunctionType) {
 	parser.block()
 
 	function := parser.endCompiler()
-	parser.emitBytes(OpConstant, parser.makeConstant(functionValue(function)))
+	parser.emitBytes(OpClosure, parser.makeConstant(functionValue(function)))
+	for _, upValue := range function.Upvalues {
+		if upValue.IsLocal {
+			parser.emitByte(1)
+		} else {
+			parser.emitByte(0)
+		}
+		parser.emitByte(upValue.Index)
+	}
 }
 
 func (parser *Parser) pushCompiler(ft FunctionType) *Compiler {
@@ -251,7 +259,11 @@ func (parser *Parser) endScope() {
 	localCount := len(locals)
 
 	for localCount > 0 && locals[localCount-1].Depth > parser.compiler.ScopeDepth {
-		parser.emitByte(OpPop)
+		if locals[localCount-1].IsCaptured {
+			parser.emitByte(OpCloseUpvalue)
+		} else {
+			parser.emitByte(OpPop)
+		}
 		localCount -= 1
 	}
 	parser.compiler.Locals = locals[:localCount]
@@ -522,6 +534,12 @@ func (parser *Parser) namedVariable(name Token, canAssign bool) {
 	if found {
 		getOp = OpGetLocal
 		setOp = OpSetLocal
+	} else if arg, found, err = parser.compiler.resolveUpValue(name); err != nil {
+		parser.error(err.Error())
+		return
+	} else if found {
+		getOp = OpGetUpValue
+		setOp = OpSetUpValue
 	} else {
 		arg = parser.identifierConstant(name)
 		getOp = OpGetGlobal
@@ -725,8 +743,9 @@ func (parser *Parser) buildParseRuleTable() {
 }
 
 type Local struct {
-	Name  Token
-	Depth int
+	Name       Token
+	Depth      int
+	IsCaptured bool
 }
 
 type Compiler struct {
@@ -751,20 +770,6 @@ func newCompiler(functionName string, ft FunctionType) *Compiler {
 	})
 
 	return compiler
-}
-
-func (compiler *Compiler) resolveLocal(name Token) (OpCode, bool, error) {
-	for i := len(compiler.Locals) - 1; i >= 0; i-- {
-		local := compiler.Locals[i]
-		if name.Lexeme == local.Name.Lexeme {
-			if local.Depth == -1 {
-				return 0, false, errors.New("can't read local variable in its own initializer")
-			}
-			return OpCode(i), true, nil
-		}
-	}
-
-	return 0, false, nil
 }
 
 func (compiler *Compiler) markInitialized() {
@@ -796,9 +801,65 @@ func (compiler *Compiler) addLocal(name Token) error {
 	}
 
 	compiler.Locals = append(compiler.Locals, Local{
-		Name:  name,
-		Depth: -1,
+		Name:       name,
+		Depth:      -1,
+		IsCaptured: false,
 	})
 
 	return nil
+}
+
+func (compiler *Compiler) resolveLocal(name Token) (uint, bool, error) {
+	for i := len(compiler.Locals) - 1; i >= 0; i-- {
+		local := compiler.Locals[i]
+		if name.Lexeme == local.Name.Lexeme {
+			if local.Depth == -1 {
+				return 0, false, errors.New("can't read local variable in its own initializer")
+			}
+			return uint(i), true, nil
+		}
+	}
+
+	return 0, false, nil
+}
+
+func (compiler *Compiler) resolveUpValue(name Token) (uint, bool, error) {
+	if compiler.Enclosing == nil {
+		return 0, false, nil
+	}
+
+	index, found, err := compiler.Enclosing.resolveLocal(name)
+	if found {
+		compiler.Enclosing.Locals[index].IsCaptured = true
+		index, err = compiler.addUpValue(index, true)
+		return index, true, err
+	}
+
+	index, found, err = compiler.Enclosing.resolveUpValue(name)
+	if found {
+		index, err = compiler.addUpValue(index, false)
+		return index, true, err
+	}
+
+	return 0, false, nil
+}
+
+func (compiler *Compiler) addUpValue(index uint, isLocal bool) (uint, error) {
+	count := len(compiler.Function.Upvalues)
+	if count >= math.MaxUint8 {
+		return 0, errors.New("too many closure variables in function")
+	}
+
+	for i, upValue := range compiler.Function.Upvalues {
+		if upValue.Index == index && upValue.IsLocal == isLocal {
+			return uint(i), nil
+		}
+	}
+
+	compiler.Function.Upvalues = append(compiler.Function.Upvalues, Upvalue{
+		Index:   index,
+		IsLocal: isLocal,
+	})
+
+	return uint(count), nil
 }
