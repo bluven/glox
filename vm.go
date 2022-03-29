@@ -214,6 +214,32 @@ func (vm *VM) run() InterpretResult {
 			} else {
 				vm.stack[upvalue.Location] = vm.peek(0)
 			}
+		case OpGetProperty:
+			if !vm.peek(0).IsInstance() {
+				vm.runtimeError("Only instances have properties.")
+				return InterpretRuntimeError
+			}
+
+			instance := vm.peek(0).Instance()
+			name := vm.readString()
+			if value, ok := instance.Fields[name]; ok {
+				vm.pop()
+				vm.push(value)
+			} else {
+				vm.runtimeError("Undefined property '%s'.", name)
+				return InterpretRuntimeError
+			}
+		case OpSetProperty:
+			if !vm.peek(1).IsInstance() {
+				vm.runtimeError("Only instances have properties.")
+				return InterpretRuntimeError
+			}
+
+			instance := vm.peek(1).Instance()
+			instance.Fields[vm.readString()] = vm.peek(0)
+			value := vm.pop()
+			vm.pop()
+			vm.push(value)
 		case OpJumpIfFalse:
 			offset := vm.readShort()
 			if vm.peek(0).IsFalsey() {
@@ -240,6 +266,8 @@ func (vm *VM) run() InterpretResult {
 					closure.Upvalues[i] = vm.currentFrame().closure.Upvalues[index]
 				}
 			}
+		case OpClass:
+			vm.push(classValue(newClass(vm.readString())))
 		case OpReturn:
 			result := vm.pop()
 
@@ -300,6 +328,11 @@ func (vm *VM) callValue(callee Value, argCount uint) bool {
 	switch callee.Type {
 	case ValueClosure:
 		return vm.call(callee.Closure(), argCount)
+	case ValueClass:
+		clazz := callee.Class()
+		vm.stackTop -= argCount + 1
+		vm.push(instanceValue(newInstance(clazz)))
+		return true
 	case ValueNativeFunction:
 		values := vm.stack[vm.stackTop-argCount:]
 		result := callee.NativeFunction()(values)

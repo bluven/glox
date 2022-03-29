@@ -29,11 +29,14 @@ const (
 	OpSetLocal
 	OpGetUpValue
 	OpSetUpValue
+	OpGetProperty
+	OpSetProperty
 	OpJump
 	OpJumpIfFalse
 	OpLoop
 	OpCall
 	OpClosure
+	OpClass
 )
 
 type Chunk struct {
@@ -162,8 +165,13 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 			fmt.Printf("%04d      |                     %s %d\n", offset, t, index)
 			offset += 2
 		}
-
 		return offset
+	case OpClass:
+		return c.constantInstruction("OP_CLASS", offset)
+	case OpGetProperty:
+		return c.constantInstruction("OP_GET_PROPERTY", offset)
+	case OpSetProperty:
+		return c.constantInstruction("OP_SET_PROPERTY", offset)
 	default:
 		fmt.Printf("Unknown opcode %d\n", op)
 		return offset + 1

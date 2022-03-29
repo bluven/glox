@@ -64,3 +64,23 @@ type RuntimeUpvalue struct {
 func newUpvalue(valueIndex uint) *RuntimeUpvalue {
 	return &RuntimeUpvalue{Location: valueIndex}
 }
+
+type ObjectClass struct {
+	Name string
+}
+
+func newClass(name string) *ObjectClass {
+	return &ObjectClass{Name: name}
+}
+
+type ObjectInstance struct {
+	Class  *ObjectClass
+	Fields map[string]Value
+}
+
+func newInstance(clazz *ObjectClass) *ObjectInstance {
+	return &ObjectInstance{
+		Class:  clazz,
+		Fields: make(map[string]Value),
+	}
+}

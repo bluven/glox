@@ -14,6 +14,8 @@ const (
 	ValueFunction
 	ValueNativeFunction
 	ValueClosure
+	ValueClass
+	ValueInstance
 )
 
 type Value struct {
@@ -44,6 +46,14 @@ func numberValue(v interface{}) Value {
 
 func objectValue(v interface{}) Value {
 	return Value{Type: ValueObject, Raw: v}
+}
+
+func classValue(v interface{}) Value {
+	return Value{Type: ValueClass, Raw: v}
+}
+
+func instanceValue(v interface{}) Value {
+	return Value{Type: ValueInstance, Raw: v}
 }
 
 func functionValue(v *Function) Value {
@@ -90,6 +100,14 @@ func (v Value) IsNativeFunction() bool {
 	return v.Type == ValueNativeFunction
 }
 
+func (v Value) IsClass() bool {
+	return v.Type == ValueClass
+}
+
+func (v Value) IsInstance() bool {
+	return v.Type == ValueInstance
+}
+
 func (v Value) IsClosure() bool {
 	return v.Type == ValueClosure
 }
@@ -130,6 +148,14 @@ func (v Value) NativeFunction() NativeFunction {
 	return v.Raw.(NativeFunction)
 }
 
+func (v Value) Class() *ObjectClass {
+	return v.Raw.(*ObjectClass)
+}
+
+func (v Value) Instance() *ObjectInstance {
+	return v.Raw.(*ObjectInstance)
+}
+
 func (v Value) Print() {
 	switch v.Type {
 	case ValueBool:
@@ -141,7 +167,13 @@ func (v Value) Print() {
 	case ValueString:
 		fmt.Printf("%s", v.Raw)
 	case ValueFunction:
-		fmt.Printf("%s", v.Raw.(*Function).Name)
+		fmt.Print(v.Raw.(*Function).Name)
+	case ValueClosure:
+		fmt.Print(v.Raw.(*Closure).Function.Name)
+	case ValueClass:
+		fmt.Print(v.Raw.(*ObjectClass).Name)
+	case ValueInstance:
+		fmt.Printf("%s instance", v.Instance().Class.Name)
 	case ValueObject:
 		panic("not implemented")
 	}

@@ -109,6 +109,8 @@ func (parser *Parser) check(tt TokenType) bool {
 
 func (parser *Parser) declaration() {
 	switch {
+	case parser.match(Class):
+		parser.classDeclaration()
 	case parser.match(Fun):
 		parser.funDeclaration()
 	case parser.match(Var):
@@ -140,6 +142,18 @@ func (parser *Parser) funDeclaration() {
 	parser.compiler.markInitialized()
 	parser.function(FunctionFunction)
 	parser.defineVariable(global)
+}
+
+func (parser *Parser) classDeclaration() {
+	parser.consume(Identifier, "Expect class name.")
+	nameConstant := parser.identifierConstant(parser.previous)
+	parser.declareVariable()
+
+	parser.emitBytes(OpClass, nameConstant)
+	parser.defineVariable(nameConstant)
+
+	parser.consume(LeftBrace, "Expect '{' before class body.")
+	parser.consume(RightBrace, "Expect '}' after class body.")
 }
 
 func (parser *Parser) defineVariable(global OpCode) {
@@ -185,6 +199,9 @@ func (parser *Parser) declareVariable() {
 
 func (parser *Parser) function(ft FunctionType) {
 	current := parser.pushCompiler(ft)
+	// This beginScope() doesn’t have a corresponding endScope() call.
+	// Because we end Compiler completely when we reach the end of
+	// the function body, there’s no need to close the lingering outermost scope.
 	parser.beginScope()
 
 	parser.consume(LeftParen, "Expect '(' after function name.")
@@ -580,6 +597,18 @@ func (parser *Parser) call(canAssign bool) {
 	parser.emitBytes(OpCall, OpCode(argCount))
 }
 
+func (parser *Parser) dot(canAssign bool) {
+	parser.consume(Identifier, "Expect property name after '.'.")
+	name := parser.identifierConstant(parser.previous)
+
+	if canAssign && parser.match(Equal) {
+		parser.expression()
+		parser.emitBytes(OpSetProperty, name)
+	} else {
+		parser.emitBytes(OpGetProperty, name)
+	}
+}
+
 func (parser *Parser) argumentList() uint {
 	var argCount uint = 0
 	if !parser.check(RightParen) {
@@ -705,6 +734,7 @@ func (parser *Parser) buildParseRuleTable() {
 		LeftBrace:    {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		RightBrace:   {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Comma:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
+		Dot:          {Prefix: nil, Infix: parser.dot, Precedence: PrecedenceCall},
 		Minus:        {Prefix: parser.unary, Infix: parser.binary, Precedence: PrecedenceTerm},
 		Plus:         {Prefix: nil, Infix: parser.binary, Precedence: PrecedenceTerm},
 		Semicolon:    {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
@@ -831,6 +861,7 @@ func (compiler *Compiler) resolveUpValue(name Token) (uint, bool, error) {
 	index, found, err := compiler.Enclosing.resolveLocal(name)
 	if found {
 		compiler.Enclosing.Locals[index].IsCaptured = true
+
 		index, err = compiler.addUpValue(index, true)
 		return index, true, err
 	}
