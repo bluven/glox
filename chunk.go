@@ -37,6 +37,8 @@ const (
 	OpCall
 	OpClosure
 	OpClass
+	OpMethod
+	OpInvoke
 )
 
 type Chunk struct {
@@ -172,6 +174,10 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return c.constantInstruction("OP_GET_PROPERTY", offset)
 	case OpSetProperty:
 		return c.constantInstruction("OP_SET_PROPERTY", offset)
+	case OpMethod:
+		return c.constantInstruction("OP_METHOD", offset)
+	case OpInvoke:
+		return c.invokeInstruction("OP_INVOKE", offset)
 	default:
 		fmt.Printf("Unknown opcode %d\n", op)
 		return offset + 1
@@ -202,5 +208,14 @@ func (c *Chunk) jumpInstruction(name string, sign int, offset int) int {
 	jump := c.codes[offset+1] << 8
 	jump |= c.codes[offset+2]
 	fmt.Printf("%-16s %4d -> %d\n", name, offset, offset+3+sign*int(jump))
+	return offset + 3
+}
+
+func (c *Chunk) invokeInstruction(name string, offset int) int {
+	constant := c.codes[offset+1]
+	argCount := c.codes[offset+2]
+	fmt.Printf("%-16s (%d args) %4d '", name, argCount, constant)
+	c.constants[constant].Print()
+	fmt.Println()
 	return offset + 3
 }

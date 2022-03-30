@@ -16,6 +16,7 @@ const (
 	ValueClosure
 	ValueClass
 	ValueInstance
+	ValueBoundedMethod
 )
 
 type Value struct {
@@ -50,6 +51,10 @@ func objectValue(v interface{}) Value {
 
 func classValue(v interface{}) Value {
 	return Value{Type: ValueClass, Raw: v}
+}
+
+func boundedMethodValue(v interface{}) Value {
+	return Value{Type: ValueBoundedMethod, Raw: v}
 }
 
 func instanceValue(v interface{}) Value {
@@ -112,6 +117,10 @@ func (v Value) IsClosure() bool {
 	return v.Type == ValueClosure
 }
 
+func (v Value) IsBoundedMethod() bool {
+	return v.Type == ValueBoundedMethod
+}
+
 func (v Value) IsString() bool {
 	return v.Type == ValueString
 }
@@ -156,6 +165,10 @@ func (v Value) Instance() *ObjectInstance {
 	return v.Raw.(*ObjectInstance)
 }
 
+func (v Value) BoundedMethod() *BoundedMethod {
+	return v.Raw.(*BoundedMethod)
+}
+
 func (v Value) Print() {
 	switch v.Type {
 	case ValueBool:
@@ -174,6 +187,8 @@ func (v Value) Print() {
 		fmt.Print(v.Raw.(*ObjectClass).Name)
 	case ValueInstance:
 		fmt.Printf("%s instance", v.Instance().Class.Name)
+	case ValueBoundedMethod:
+		fmt.Print(v.BoundedMethod().Method.Function.Name)
 	case ValueObject:
 		panic("not implemented")
 	}

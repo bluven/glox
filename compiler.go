@@ -33,8 +33,10 @@ const (
 type FunctionType int
 
 const (
-	FunctionFunction = iota
+	FunctionFunction FunctionType = iota
+	FunctionMethod
 	FunctionScript
+	FunctionInit
 )
 
 type Parser struct {
@@ -46,8 +48,9 @@ type Parser struct {
 	current, previous Token
 	rules             map[TokenType]ParseRule
 
-	chunk    *Chunk
-	compiler *Compiler
+	chunk         *Chunk
+	compiler      *Compiler
+	classCompiler *ClassCompiler
 }
 
 func NewParser(source string, disassemble bool) *Parser {
@@ -152,8 +155,31 @@ func (parser *Parser) classDeclaration() {
 	parser.emitBytes(OpClass, nameConstant)
 	parser.defineVariable(nameConstant)
 
+	parser.classCompiler = &ClassCompiler{Enclosing: parser.classCompiler}
+
+	parser.namedVariable(parser.previous, false)
+
 	parser.consume(LeftBrace, "Expect '{' before class body.")
+	for !parser.check(RightBrace) && !parser.check(EOF) {
+		parser.method()
+	}
 	parser.consume(RightBrace, "Expect '}' after class body.")
+	parser.emitByte(OpPop)
+
+	parser.classCompiler = parser.classCompiler.Enclosing
+}
+
+func (parser *Parser) method() {
+	parser.consume(Identifier, "Expect method name.")
+	ci := parser.identifierConstant(parser.previous)
+
+	ft := FunctionMethod
+	if parser.previous.Lexeme == "init" {
+		ft = FunctionInit
+	}
+	parser.function(ft)
+
+	parser.emitBytes(OpMethod, ci)
 }
 
 func (parser *Parser) defineVariable(global OpCode) {
@@ -415,6 +441,10 @@ func (parser *Parser) returnStatement() {
 	if parser.match(Semicolon) {
 		parser.emitReturn()
 	} else {
+		if parser.compiler.Type == FunctionInit {
+			parser.error("Can't return a value from an initializer.")
+		}
+
 		parser.expression()
 		parser.consume(Semicolon, "Expect ';' after return value.")
 		parser.emitByte(OpReturn)
@@ -539,6 +569,15 @@ func (parser *Parser) variable(canAssign bool) {
 	parser.namedVariable(parser.previous, canAssign)
 }
 
+func (parser *Parser) this(canAssign bool) {
+	if parser.classCompiler == nil {
+		parser.error("Can't use 'this' outside of a class.")
+		return
+	}
+
+	parser.variable(false)
+}
+
 func (parser *Parser) namedVariable(name Token, canAssign bool) {
 	var getOp, setOp OpCode
 
@@ -599,13 +638,17 @@ func (parser *Parser) call(canAssign bool) {
 
 func (parser *Parser) dot(canAssign bool) {
 	parser.consume(Identifier, "Expect property name after '.'.")
-	name := parser.identifierConstant(parser.previous)
+	nameIndex := parser.identifierConstant(parser.previous)
 
 	if canAssign && parser.match(Equal) {
 		parser.expression()
-		parser.emitBytes(OpSetProperty, name)
+		parser.emitBytes(OpSetProperty, nameIndex)
+	} else if parser.match(LeftParen) {
+		argCount := parser.argumentList()
+		parser.emitBytes(OpInvoke, nameIndex)
+		parser.emitByte(argCount)
 	} else {
-		parser.emitBytes(OpGetProperty, name)
+		parser.emitBytes(OpGetProperty, nameIndex)
 	}
 }
 
@@ -647,7 +690,6 @@ func (parser *Parser) synchronize() {
 }
 
 func (parser *Parser) endCompiler() *Function {
-	parser.emitByte(OpNil)
 	parser.emitReturn()
 
 	function := parser.compiler.Function
@@ -697,6 +739,11 @@ func (parser *Parser) currentChunk() *Chunk {
 }
 
 func (parser *Parser) emitReturn() {
+	if parser.compiler.Type == FunctionInit {
+		parser.emitBytes(OpGetLocal, 0)
+	} else {
+		parser.emitByte(OpNil)
+	}
 	parser.emitByte(OpReturn)
 }
 
@@ -763,7 +810,7 @@ func (parser *Parser) buildParseRuleTable() {
 		Print:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Return:       {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Super:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
-		This:         {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
+		This:         {Prefix: parser.this, Infix: nil, Precedence: PrecedenceNone},
 		True:         {Prefix: parser.literal, Infix: nil, Precedence: PrecedenceNone},
 		Var:          {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		While:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
@@ -794,8 +841,13 @@ func newCompiler(functionName string, ft FunctionType) *Compiler {
 		Function:   newFunction(functionName),
 	}
 
+	name := ""
+	if ft != FunctionFunction {
+		name = "this"
+	}
+
 	compiler.Locals = append(compiler.Locals, Local{
-		Name:  Token{Type: Error, Lexeme: "", Line: 0},
+		Name:  Token{Type: Error, Lexeme: name, Line: 0},
 		Depth: 0,
 	})
 
@@ -893,4 +945,8 @@ func (compiler *Compiler) addUpValue(index uint, isLocal bool) (uint, error) {
 	})
 
 	return uint(count), nil
+}
+
+type ClassCompiler struct {
+	Enclosing *ClassCompiler
 }

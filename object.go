@@ -66,11 +66,12 @@ func newUpvalue(valueIndex uint) *RuntimeUpvalue {
 }
 
 type ObjectClass struct {
-	Name string
+	Name    string
+	Methods map[string]Value
 }
 
 func newClass(name string) *ObjectClass {
-	return &ObjectClass{Name: name}
+	return &ObjectClass{Name: name, Methods: make(map[string]Value)}
 }
 
 type ObjectInstance struct {
@@ -82,5 +83,17 @@ func newInstance(clazz *ObjectClass) *ObjectInstance {
 	return &ObjectInstance{
 		Class:  clazz,
 		Fields: make(map[string]Value),
+	}
+}
+
+type BoundedMethod struct {
+	Receiver Value
+	Method   *Closure
+}
+
+func newBoundedMethod(value Value, method *Closure) *BoundedMethod {
+	return &BoundedMethod{
+		Receiver: value,
+		Method:   method,
 	}
 }
