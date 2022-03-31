@@ -275,6 +275,30 @@ func (vm *VM) run() InterpretResult {
 			if !vm.invoke(method, argCount) {
 				return InterpretRuntimeError
 			}
+		case OpInherit:
+			superclass := vm.peek(1)
+			if !superclass.IsClass() {
+				vm.runtimeError("Superclass must be a class.")
+				return InterpretRuntimeError
+			}
+			subclass := vm.peek(0).Class()
+			for name, method := range superclass.Class().Methods {
+				subclass.Methods[name] = method
+			}
+			vm.pop()
+		case OpGetSuper:
+			name := vm.readString()
+			superclass := vm.pop().Class()
+			if !vm.bindMethod(superclass, name) {
+				return InterpretRuntimeError
+			}
+		case OpSuperInvoke:
+			method := vm.readString()
+			argCount := vm.readByte()
+			superclass := vm.pop().Class()
+			if !vm.invokeFromClass(superclass, method, argCount) {
+				return InterpretRuntimeError
+			}
 		case OpReturn:
 			result := vm.pop()
 

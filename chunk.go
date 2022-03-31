@@ -39,6 +39,9 @@ const (
 	OpClass
 	OpMethod
 	OpInvoke
+	OpInherit
+	OpGetSuper
+	OpSuperInvoke
 )
 
 type Chunk struct {
@@ -178,6 +181,12 @@ func (c *Chunk) disassembleInstruction(offset int) int {
 		return c.constantInstruction("OP_METHOD", offset)
 	case OpInvoke:
 		return c.invokeInstruction("OP_INVOKE", offset)
+	case OpInherit:
+		return c.simpleInstruction("OP_INHERIT", offset)
+	case OpGetSuper:
+		return c.constantInstruction("OP_GET_SUPER", offset)
+	case OpSuperInvoke:
+		return c.invokeInstruction("OP_SUPER_INVOKE", offset)
 	default:
 		fmt.Printf("Unknown opcode %d\n", op)
 		return offset + 1

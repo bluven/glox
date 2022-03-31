@@ -149,7 +149,8 @@ func (parser *Parser) funDeclaration() {
 
 func (parser *Parser) classDeclaration() {
 	parser.consume(Identifier, "Expect class name.")
-	nameConstant := parser.identifierConstant(parser.previous)
+	className := parser.previous
+	nameConstant := parser.identifierConstant(className)
 	parser.declareVariable()
 
 	parser.emitBytes(OpClass, nameConstant)
@@ -157,7 +158,27 @@ func (parser *Parser) classDeclaration() {
 
 	parser.classCompiler = &ClassCompiler{Enclosing: parser.classCompiler}
 
-	parser.namedVariable(parser.previous, false)
+	if parser.match(Less) {
+		parser.consume(Identifier, "Expect superclass name.")
+		parser.variable(false)
+
+		if className.Lexeme == parser.previous.Lexeme {
+			parser.error("A class can't inherit from itself.")
+		}
+
+		parser.beginScope()
+		if err := parser.compiler.addLocal(parser.syntheticToken("super")); err != nil {
+			parser.error(err.Error())
+		}
+
+		parser.defineVariable(0)
+
+		parser.namedVariable(className, false)
+		parser.emitByte(OpInherit)
+		parser.classCompiler.HasSuperClass = true
+	}
+
+	parser.namedVariable(className, false)
 
 	parser.consume(LeftBrace, "Expect '{' before class body.")
 	for !parser.check(RightBrace) && !parser.check(EOF) {
@@ -166,7 +187,14 @@ func (parser *Parser) classDeclaration() {
 	parser.consume(RightBrace, "Expect '}' after class body.")
 	parser.emitByte(OpPop)
 
+	if parser.classCompiler.HasSuperClass {
+		parser.endScope()
+	}
 	parser.classCompiler = parser.classCompiler.Enclosing
+}
+
+func (parser *Parser) syntheticToken(name string) Token {
+	return Token{Type: Error, Lexeme: name, Line: 0}
 }
 
 func (parser *Parser) method() {
@@ -180,15 +208,6 @@ func (parser *Parser) method() {
 	parser.function(ft)
 
 	parser.emitBytes(OpMethod, ci)
-}
-
-func (parser *Parser) defineVariable(global OpCode) {
-	if parser.compiler.ScopeDepth > 0 {
-		parser.compiler.markInitialized()
-		return
-	}
-
-	parser.emitBytes(OpDefineGlobal, global)
 }
 
 func (parser *Parser) parseVariable(errMsg string) OpCode {
@@ -219,8 +238,17 @@ func (parser *Parser) declareVariable() {
 
 	err := parser.compiler.addLocal(name)
 	if err != nil {
-		parser.error("Too many local variables in function.")
+		parser.error(err.Error())
 	}
+}
+
+func (parser *Parser) defineVariable(global OpCode) {
+	if parser.compiler.ScopeDepth > 0 {
+		parser.compiler.markInitialized()
+		return
+	}
+
+	parser.emitBytes(OpDefineGlobal, global)
 }
 
 func (parser *Parser) function(ft FunctionType) {
@@ -578,6 +606,29 @@ func (parser *Parser) this(canAssign bool) {
 	parser.variable(false)
 }
 
+func (parser *Parser) super(canAssign bool) {
+	if parser.classCompiler == nil {
+		parser.error("Can't use 'super' outside of a class.")
+	} else if !parser.classCompiler.HasSuperClass {
+		parser.error("Can't use 'super' in a class with no superclass.")
+	}
+
+	parser.consume(Dot, "Expect '.' after 'super'.")
+	parser.consume(Identifier, "Expect superclass method name.")
+	nameIndex := parser.identifierConstant(parser.previous)
+	parser.namedVariable(parser.syntheticToken("this"), false)
+
+	if parser.match(LeftParen) {
+		argCount := parser.argumentList()
+		parser.namedVariable(parser.syntheticToken("super"), false)
+		parser.emitBytes(OpSuperInvoke, nameIndex)
+		parser.emitByte(argCount)
+	} else {
+		parser.namedVariable(parser.syntheticToken("super"), false)
+		parser.emitBytes(OpGetSuper, nameIndex)
+	}
+}
+
 func (parser *Parser) namedVariable(name Token, canAssign bool) {
 	var getOp, setOp OpCode
 
@@ -809,7 +860,7 @@ func (parser *Parser) buildParseRuleTable() {
 		Or:           {Prefix: nil, Infix: parser.or, Precedence: PrecedenceOr},
 		Print:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
 		Return:       {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
-		Super:        {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
+		Super:        {Prefix: parser.super, Infix: nil, Precedence: PrecedenceNone},
 		This:         {Prefix: parser.this, Infix: nil, Precedence: PrecedenceNone},
 		True:         {Prefix: parser.literal, Infix: nil, Precedence: PrecedenceNone},
 		Var:          {Prefix: nil, Infix: nil, Precedence: PrecedenceNone},
@@ -948,5 +999,6 @@ func (compiler *Compiler) addUpValue(index uint, isLocal bool) (uint, error) {
 }
 
 type ClassCompiler struct {
-	Enclosing *ClassCompiler
+	Enclosing     *ClassCompiler
+	HasSuperClass bool
 }
